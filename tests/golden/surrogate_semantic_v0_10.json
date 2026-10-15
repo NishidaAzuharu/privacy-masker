@@ -1,0 +1,206 @@
+{
+  "version": "0.10",
+  "key": "golden-surrogate-key",
+  "cases": [
+    {
+      "kind": "person",
+      "value": "山田太郎",
+      "expected": "松井佳祐"
+    },
+    {
+      "kind": "person",
+      "value": "山田",
+      "expected": "松井"
+    },
+    {
+      "kind": "person",
+      "value": "佐藤 花子",
+      "expected": "木下 莉子"
+    },
+    {
+      "kind": "person",
+      "value": "ミゲル・サントス",
+      "expected": "ラジ・ヤンセン"
+    },
+    {
+      "kind": "person",
+      "value": "ながしま",
+      "expected": "やまぐち"
+    },
+    {
+      "kind": "person",
+      "value": "John Smith",
+      "expected": "Yuto Kobayashi"
+    },
+    {
+      "kind": "person",
+      "value": "たなか",
+      "expected": "そら"
+    },
+    {
+      "kind": "person",
+      "value": "Ito",
+      "expected": "Inoue"
+    },
+    {
+      "kind": "person",
+      "value": "ｻﾄｳ",
+      "expected": "ﾜﾀﾅﾍﾞ"
+    },
+    {
+      "kind": "org",
+      "value": "株式会社大和技研",
+      "expected": "株式会社若草薬品"
+    },
+    {
+      "kind": "org",
+      "value": "西日本あおば信用金庫",
+      "expected": "中央早瀬証券"
+    },
+    {
+      "kind": "org",
+      "value": "アオバシステムズ株式会社",
+      "expected": "ティアワークスシステムズ株式会社"
+    },
+    {
+      "kind": "org",
+      "value": "営業二課",
+      "expected": "広報部"
+    },
+    {
+      "kind": "org",
+      "value": "医療法人伊織会",
+      "expected": "医療法人扇会"
+    },
+    {
+      "kind": "facility",
+      "value": "汐見クリニック",
+      "expected": "白樺総合病院"
+    },
+    {
+      "kind": "facility",
+      "value": "市立若草小学校",
+      "expected": "青葉幼稚園"
+    },
+    {
+      "kind": "facility",
+      "value": "汐見駅",
+      "expected": "旭町空港"
+    },
+    {
+      "kind": "location",
+      "value": "大分県",
+      "expected": "長崎県"
+    },
+    {
+      "kind": "location",
+      "value": "札幌市",
+      "expected": "旭川市"
+    },
+    {
+      "kind": "location",
+      "value": "パリ",
+      "expected": "オークランド"
+    },
+    {
+      "kind": "location",
+      "value": "西新宿2丁目",
+      "expected": "西町4丁目"
+    },
+    {
+      "kind": "address",
+      "value": "東京都新宿区西新宿1-2-3",
+      "expected": "神奈川県川崎市中原区港町2-9-5"
+    },
+    {
+      "kind": "address",
+      "value": "神奈川県横浜市中区太田町５丁目８番地 サンハイツ301",
+      "expected": "埼玉県さいたま市大宮区東町４丁目８番１９号グラン富士見１２０３号室"
+    },
+    {
+      "kind": "person",
+      "value": "スズキ タロウ",
+      "expected": "シミズ ソラ"
+    },
+    {
+      "kind": "person",
+      "value": "マイケルジョンソン",
+      "expected": "ジョンブラウン"
+    },
+    {
+      "kind": "location",
+      "value": "函館市",
+      "expected": "帯広市"
+    },
+    {
+      "kind": "org",
+      "value": "青葉電気鉄道",
+      "expected": "山彦交通"
+    },
+    {
+      "kind": "org",
+      "value": "みなと商事",
+      "expected": "曙金属"
+    },
+    {
+      "kind": "org",
+      "value": "若草の会",
+      "expected": "曙協会"
+    },
+    {
+      "kind": "org",
+      "value": "青葉開発機構",
+      "expected": "北斗機構"
+    },
+    {
+      "kind": "org",
+      "value": "汐見航空局",
+      "expected": "東雲公社"
+    },
+    {
+      "kind": "org",
+      "value": "若葉ホークス",
+      "expected": "扇放送"
+    },
+    {
+      "kind": "org",
+      "value": "青葉通信社",
+      "expected": "富士見放送"
+    },
+    {
+      "kind": "org",
+      "value": "若葉県教育委員会",
+      "expected": "新星機構"
+    },
+    {
+      "kind": "org",
+      "value": "青葉祭実行委員会",
+      "expected": "購買チーム"
+    },
+    {
+      "kind": "location",
+      "value": "若葉地区",
+      "expected": "弥生地区"
+    },
+    {
+      "kind": "location",
+      "value": "青葉1区",
+      "expected": "東町商店街"
+    },
+    {
+      "kind": "location",
+      "value": "ミナト市",
+      "expected": "ブエノスアイレス"
+    },
+    {
+      "kind": "location",
+      "value": "イラク",
+      "expected": "ペルー"
+    },
+    {
+      "kind": "location",
+      "value": "上海",
+      "expected": "バンクーバー"
+    }
+  ]
+}
