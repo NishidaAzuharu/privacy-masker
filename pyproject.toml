@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "privacy-masker"
+version = "0.11.0"
+description = "Detector/Policy/Operator分離型の日本語PII仮名化・匿名化ライブラリ（自然な日本人名・企業名・住所へのSurrogate置換対応・意味を保つ置換と往復）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Azuharu Nishida" },
+]
+keywords = [
+    "anonymization", "pseudonymization", "pii", "privacy", "ner",
+    "japanese", "masking", "de-identification", "llm",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Natural Language :: Japanese",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Topic :: Text Processing :: Linguistic",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/NishidaAzuharu/privacy-masker"
+Changelog = "https://github.com/NishidaAzuharu/privacy-masker/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# 実推論にはtorchが必要（transformers本体はtorch非依存のため[torch]込みで指定）
+transformers = ["transformers[torch]>=4.30"]
+crypto = ["cryptography>=41"]
+janome = ["janome>=0.5"]
+mecab = ["fugashi>=1.3", "ipadic>=1.0"]   # MorphologicalRefiner の高速バックエンド（IPADIC 品詞体系で Janome と同一）
+dev = ["pytest>=7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["privacy_masker"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "privacy_masker/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

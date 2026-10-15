@@ -1,0 +1,53 @@
+# PyPIへの公開はGitHub Releaseの発行をトリガーにTrusted Publishing（OIDC）で行う。
+# 事前設定: PyPI側でプロジェクトのTrusted Publisherにこのリポジトリと
+# このワークフローファイル名(publish.yml)・environment(pypi)を登録すること。
+# APIトークンをSecretsに置く必要はない。
+#
+# 構成の意図（PyPA公式ガイド準拠）:
+# - build と publish をジョブ分離し、id-token: write はpublishジョブのみに付与
+#   （ビルド時に走るサードパーティコードがOIDCトークンへ到達できないようにする）
+# - タグ名とpyproject.tomlのversionの一致を検証してから公開する
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.release.prerelease }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: タグとpyproject versionの一致を検証（例: タグ v0.5.0 = version 0.5.0）
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::tag ($TAG) と pyproject version ($VER) が一致しません"
+            exit 1
+          fi
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # release/v1
