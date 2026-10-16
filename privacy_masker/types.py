@@ -28,7 +28,7 @@ class TransformedEntity:
     score: float
     operator: str
     # transform(explain=True) のとき、検出器・Refiner・Annotator・重複解決の経緯を人が読める形で入れる
-    # （Presidio の analysis_explanation に相当）。原文の文字列は含めない
+    # 。原文の文字列は含めない
     explanation: str | None = None
 
     def __repr__(self) -> str:  # replacementはMask等で原文文字を含み得るため出さない

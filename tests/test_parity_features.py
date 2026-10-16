@@ -1,4 +1,4 @@
-"""他ライブラリ（Presidio / LLM Guard）に倣った機能: Hash・Encrypt・Custom オペレータ、呼び出し時オプション
+"""他ライブラリに倣った機能: Hash・Encrypt・Custom オペレータ、呼び出し時オプション
 （entities / score_threshold / allow_list / deny_list）、explain。"""
 import pytest
 

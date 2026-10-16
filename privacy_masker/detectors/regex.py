@@ -13,7 +13,7 @@ from ..types import Entity
 @dataclass(frozen=True)
 class RegexPattern:
     """正規表現 1 本。score は文脈語なしの信頼度、context の語が前後 context_window 字にあれば context_score に上げる
-    （Presidio の PatternRecognizer + context に相当）。require_context=True なら文脈語が無いと出さない
+    。require_context=True なら文脈語が無いと出さない
     （7 桁の口座番号のように、数字列だけでは判別できないもの）。"""
 
     entity_type: str
@@ -59,7 +59,7 @@ class RegexDetector:
     @classmethod
     def default_ja(cls, *, dates: bool = False) -> "RegexDetector":
         """日本語向けの既定パターン。dates=True で DATE（年月日、和暦、生年月日文脈で 1.0）と AGE（○歳）も検出する。
-        日付はほとんどの文書に大量に出る準識別子なので既定では入れない（Presidio の DATE_TIME と同じ扱いにしたい場合は True）。"""
+        日付はほとんどの文書に大量に出る準識別子なので既定では入れない（日付・年齢も検出したい場合は True）。"""
         return cls(
             [
                 RegexPattern("EMAIL", re.compile(

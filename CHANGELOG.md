@@ -281,11 +281,11 @@
 - **修正**: `SpanRefiner` / `MorphologicalRefiner` の「直後が肩書きなら末尾の助詞を残す」判定が型に関係なく適用され、`医療法人伊織会の理事長` の「の」が ORG スパンに残っていた。この曖昧性は PERSON 固有（ひらがな終わりの名前）で、品詞では判別できない（`佐藤まりも氏` の「も」と `田中は先生` の「は」は同じ 助詞,係助詞）ため、判定を `honorific_types`（既定 PERSON）に限定した。過剰マスクが 1〜5 字減り、漏れ・危険・coverage は全評価セットで不変
 - **追加**: `MorphologicalRefiner(backend="auto"|"janome"|"fugashi")`。fugashi + IPADIC（extra `[mecab]`）があれば自動で使い、Janome と同じ品詞体系で 10 倍以上速い。`TransformersNerDetector(dtype=, model_kwargs=)` で bf16 や `attn_implementation`（sdpa / flash_attention_2）を指定可能。README に GPU・attention・精度型の選び方を追加
 - **追加**: 正規表現カタログを拡張。法人番号（検査用数字）・旅券番号・在留カード番号、文脈必須の運転免許証番号・基礎年金番号・口座番号、URL・IPv6・MAC アドレス。`default_ja(dates=True)` で DATE（和暦・西暦、生年月日文脈で 1.0）と AGE。`RegexPattern` に `score` / `context` / `context_score` / `require_context`
-- **追加**: `ContextEnhancer`（文脈語でスコアを上げる。`PrivacyEngine(enhancer=)`）、`engine.explain()`、`engine.restore_batch()`、`Mask` の Presidio 互換引数 `chars_to_mask` / `masking_char` / `from_end`
+- **追加**: `ContextEnhancer`（文脈語でスコアを上げる。`PrivacyEngine(enhancer=)`）、`engine.explain()`、`engine.restore_batch()`、`Mask` の別名引数 `chars_to_mask` / `masking_char` / `from_end`
 - **追加**: オペレータ `DateShift`（日付を一定日数ずらす。和暦・西暦・スラッシュ形式を保持）、`Bucketize`（数値の区間化）、`FormatPreserving`（桁数・文字種を保った仮名。非可逆）
 - **追加**: `privacy_masker.structured.transform_records / transform_dataframe`（列型の自動推定つき）、`privacy_masker.evaluation.evaluate`（gold 付き文書の coverage / 危険 / 過剰マスク）、`privacy_masker.config.load_engine`（YAML / JSON / dict から組み立て）
-- **追加**: 他ライブラリ（Presidio / LLM Guard）に倣った API。呼び出し時オプション `entities=`・`score_threshold=`（型別 override）・`allow_list=`（exact / regex）・`deny_list=`（型指定）・`explain=`（判定の経緯を `TransformedEntity.explanation` に。原文は含まない）。`PrivacyEngine(...)` の同名引数で既定値を設定可
-- **追加**: オペレータ `Hash(algorithm, salt, length)`、`Encrypt(key)` と `decrypt_text(text, key)`（本文中の Fernet 暗号文を復号）、`Custom(fn)`。README に重複解決の規則と Presidio との対応表を追加
+- **追加**: 他ライブラリに倣った API。呼び出し時オプション `entities=`・`score_threshold=`（型別 override）・`allow_list=`（exact / regex）・`deny_list=`（型指定）・`explain=`（判定の経緯を `TransformedEntity.explanation` に。原文は含まない）。`PrivacyEngine(...)` の同名引数で既定値を設定可
+- **追加**: オペレータ `Hash(algorithm, salt, length)`、`Encrypt(key)` と `decrypt_text(text, key)`（本文中の Fernet 暗号文を復号）、`Custom(fn)`。README に重複解決の規則を追加
 - **追加**: `HandleDetector`（チャット・ログ・SNS のハンドル名を `USERNAME` 型で検出: `@handle`、行頭の話者ラベル、`user=` 等のキー値。ヘッダ語・1 文字ラベルは除外）。盲検評価 v1 で PERSON の危険見逃し 107 件のうち約 20 件がこの表層だった
 - **変更**: `RegexDetector.default_ja()` の取りこぼしを修正: 全角ハイフン、空白・「の」区切りの電話（桁数 10〜11 のみ）、国際番号（+81 / +44 / +886）、文末ピリオド直前の IPv4、4 桁区切りの個人番号（16 桁カード番号の一部は取らない）
 - **変更**: `AffixExpander` が ADDRESS / LOCATION の末尾に直結する番地・号室（東原|5685、栄浜|3-4）と、ADDRESS の建物名の後の空白＋部屋番号（スカイコート栄浜| 908）を取り込む。年月日・金額・数量の単位が続くものは取らない

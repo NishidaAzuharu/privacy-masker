@@ -1,10 +1,10 @@
-"""構造化データ（dict のレコード列・pandas DataFrame）の匿名化（presidio-structured に相当）。
+"""構造化データ（dict のレコード列・pandas DataFrame）の匿名化。
 
 - `transform_records(engine, records, fields=None, column_types="auto")`
   各レコードの文字列フィールドを `engine.transform_batch()` でまとめて変換する。
   `column_types="auto"` のとき、列（フィールド）ごとに標本を検出して「その列の値がほぼ全体として 1 つの型に一致する」場合は
   列全体をその型の値とみなし、検出に頼らず列の全値に Policy の operator を適用する（氏名列・住所列で NER が短い値を落とす事故を防ぐ）。
-  presidio-structured の most_common 戦略に相当。`column_types={"name": "PERSON"}` で明示指定もできる。
+  `column_types={"name": "PERSON"}` で明示指定もできる。
   型が決まった列は `TransformContext.text=None`（文書全文を渡さない）で operator を呼ぶため、
   `Surrogate` の安全フィルタの `present_in_document`（設計 §7）は効かない。偽名がレコード内の
   他の列の値と偶然衝突する可能性は残る（列単位の処理であり文書横断の既出チェックではないため）。

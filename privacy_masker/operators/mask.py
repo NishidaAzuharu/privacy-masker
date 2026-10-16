@@ -13,7 +13,7 @@ class Mask:
         self, char: str = "*", keep_prefix: int = 0, keep_suffix: int = 0, *,
         chars_to_mask: int | None = None, masking_char: str | None = None, from_end: bool = False,
     ) -> None:
-        """keep_prefix / keep_suffix は「残す文字数」。Presidio 互換の chars_to_mask / masking_char / from_end
+        """keep_prefix / keep_suffix は「残す文字数」。別名の chars_to_mask / masking_char / from_end
         は「マスクする文字数」（from_end=True なら末尾から）。両方指定したら chars_to_mask を優先する。"""
         if masking_char is not None:
             char = masking_char

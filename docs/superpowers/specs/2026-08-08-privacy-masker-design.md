@@ -11,7 +11,7 @@ De-identification / Pseudonymization Operatorを適用する汎用Pythonライ�
 
 「個人情報NERライブラリ」ではない。NER・正規表現・その他任意の検出器を
 差し替え可能なコンポーネントとして扱い、検出（Detector）と変換（Operator）を
-分離する。Microsoft PresidioのAnalyzer/Anonymizer分離の設計思想を参考にしつつ、
+分離する。検出と変換を分離する一般的な設計思想を参考にしつつ、
 日本語NER（HuggingFace Transformers token classification）をfirst-classに扱う
 軽量ライブラリとして設計する。
 
@@ -645,7 +645,6 @@ PrivacyMaskerError            # 基底
 
 ## 19. 参考
 
-- Microsoft Presidio: Analyzer / Anonymizer分離、Recognizerの差し替え設計
 - Google Cloud Sensitive Data Protection: infoType（検出）とtransformation（変換）の分離、一方向 / 双方向トークンの使い分け
 - 個人情報保護委員会: 仮名加工情報 / 匿名加工情報の区別、対応表の安全管理措置
 - cryptography公式ドキュメント: 高レベルAPI（Fernet）推奨、AES-GCM nonce再利用の危険性
