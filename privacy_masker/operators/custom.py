@@ -1,4 +1,4 @@
-"""Custom: 利用者の関数で置換文字列を決める（Presidio の `custom` に相当）。
+"""Custom: 利用者の関数で置換文字列を決める。
 
 fn(value, entity) -> str。value は原文の該当部分、entity は型・位置・スコア。戻り値が str でなければ ConfigurationError。
 """

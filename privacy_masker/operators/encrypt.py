@@ -1,4 +1,4 @@
-"""Encrypt: 値を Fernet で暗号化し、暗号文（URL-safe base64）を本文に埋める（Presidio の `encrypt` / `decrypt` に相当）。
+"""Encrypt: 値を Fernet で暗号化し、暗号文（URL-safe base64）を本文に埋める。
 
 `Tokenize(strategy="vault")` は原文を Store に保存してトークンを置くが、Encrypt は暗号文そのものを本文に置くので
 Store が要らず、鍵さえあれば `decrypt_text()` で本文から直接復元できる。`pip install 'privacy-masker[crypto]'` が必要。

@@ -1,4 +1,4 @@
-"""ContextEnhancer: 文脈語で検出スコアを上げる（Presidio の LemmaContextAwareEnhancer、Azure の entitySynonyms に相当）。
+"""ContextEnhancer: 文脈語で検出スコアを上げる。
 
 NER や正規表現の検出結果に対し、スパンの前後 window 字に型ごとの手掛かり語（氏名・担当・電話・住所 …）があれば
 score を boost だけ上げる（上限 max_score）。`score_threshold` と組み合わせると「文脈のない低スコア検出だけを落とす」

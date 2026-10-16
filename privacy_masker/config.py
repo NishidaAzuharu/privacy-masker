@@ -1,4 +1,4 @@
-"""設定ファイル（YAML / JSON / dict）から PrivacyEngine を組み立てる（Presidio の YAML 設定に相当）。
+"""設定ファイル（YAML / JSON / dict）から PrivacyEngine を組み立てる。
 
     from privacy_masker.config import load_engine, build_engine
     engine = load_engine("privacy_masker.yaml")          # .yaml は PyYAML（pip install pyyaml）が必要。無ければ .json を使う

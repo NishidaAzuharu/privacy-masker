@@ -249,21 +249,6 @@ NER が所要時間のほぼ全てを占めます（Apple Silicon、平均 337 �
 - 形態素解析が必要なら `[mecab]`（fugashi）を推奨します。Janome は純 Python で約 5 ms/doc 余計にかかります。
 - detector 側の `batch_size` は CPU で 8〜16、GPU で 32 以上が目安です。
 
-## Presidio との対応
-
-| Presidio | privacy-masker |
-|---|---|
-| `AnalyzerEngine.analyze()` / `AnonymizerEngine.anonymize()` | `engine.detect()` / `engine.transform()` |
-| `DeanonymizeEngine.deanonymize()` | `engine.restore()`（vault）/ `decrypt_text()` |
-| `OperatorConfig("replace" / "mask" / "hash" / "encrypt" / "custom" / "keep")` | `Replace` / `Mask` / `Hash` / `Encrypt` / `Custom` / `Keep` |
-| `PatternRecognizer(patterns=, deny_list=)` | `RegexDetector([RegexPattern(...)])`、`deny_list=` |
-| `analyze(entities=, score_threshold=, allow_list=, return_decision_process=)` | `entities=`, `score_threshold=`, `allow_list=`, `explain=True` |
-| `BatchAnalyzerEngine` / presidio-structured | `transform_batch()` / `structured.transform_records()` |
-| `LemmaContextAwareEnhancer` | `ContextEnhancer` |
-| YAML 設定 | `config.load_engine()` |
-
-Presidio に無いもの: 形態素境界の補正、種別語尾の拡張、識別性ベースの保持、日本語の意味を保つ Surrogate と姓リンク、日本固有の識別子。privacy-masker に無いもの: 画像の墨消し、REST API、多言語 NLP エンジンの差し替え。
-
 ## 注意（脅威モデル）
 
 - `hmac` 戦略は **鍵の秘匿を前提とする仮名化** です。鍵保持者は低エントロピーの値（電話番号など）を全数照合で復元できます。個人情報保護法の匿名加工情報の基準への適合を保証するものではありません。

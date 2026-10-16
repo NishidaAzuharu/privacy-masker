@@ -30,7 +30,7 @@ _PUBLIC_SUFFIX = "_PUBLIC"
 
 
 class _Options:
-    """呼び出し時オプション（Presidio の analyze() 引数に相当）。engine の既定値を呼び出し引数で上書きする。"""
+    """呼び出し時オプション。engine の既定値を呼び出し引数で上書きする。"""
 
     __slots__ = ("entities", "score_threshold", "allow_list", "allow_list_match", "deny_list", "_allow_res")
 
@@ -161,7 +161,7 @@ class PrivacyEngine:
         deny_list: Mapping[str, str] | Iterable[str] | None = None,
     ) -> list[ExplainedEntity]:
         """detect() と同じ最終エンティティに、判定の経緯（検出器・スコア・Refiner・重複解決・Annotator）を付けて返す。
-        Presidio の return_decision_process=True に相当。原文の文字は含めない。"""
+        原文の文字は含めない。"""
         opts = self._options(entities, score_threshold, allow_list, allow_list_match, deny_list)
         raw, _ = self._run_detectors(text)
         final, kept = self._finalize(text, raw, opts)
@@ -465,7 +465,7 @@ class PrivacyEngine:
         return sorted(toks, key=lambda t: (-len(t), t))
 
     def restore_batch(self, texts: Sequence[str], *, scope_id: str) -> list[RestoreResult]:
-        """複数文書をまとめて復元（Presidio の BatchDeanonymizeEngine に相当）。同じ scope_id の対応表を使う。"""
+        """複数文書をまとめて復元。同じ scope_id の対応表を使う。"""
         self._require_crypto()
         pattern = self._restore_pattern(scope_id)      # scope の対応表（トークン列挙）は1回だけ読む
         return [self._restore_with(t, scope_id, pattern) for t in texts]

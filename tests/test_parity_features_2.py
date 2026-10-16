@@ -1,4 +1,4 @@
-"""倣った機能の第 2 弾: Mask の Presidio 互換引数、engine.explain()、restore_batch()、DateShift / Bucketize / FormatPreserving。"""
+"""倣った機能の第 2 弾: Mask の別名引数、engine.explain()、restore_batch()、DateShift / Bucketize / FormatPreserving。"""
 import pytest
 
 from privacy_masker import PrivacyEngine, Policy
@@ -15,7 +15,7 @@ def E(t, text, surface, score=0.9, source="fake"):
     s = text.index(surface); return Entity(t, s, s + len(surface), score, source)
 
 
-def test_mask_presidio_aliases():
+def test_mask_alias_arguments():
     e = Entity("PHONE_NUMBER", 0, 12, 1.0)
     assert Mask(chars_to_mask=4, masking_char="#", from_end=True).apply("03-1234-5678", e, None) == "03-1234-####"
     assert Mask(chars_to_mask=4).apply("03-1234-5678", e, None) == "****234-5678"

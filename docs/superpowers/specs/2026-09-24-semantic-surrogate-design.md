@@ -205,7 +205,7 @@ Surrogate(
 - `Policy(rules={"PERSON": Surrogate(kind="person"), ...})` の書き方は不変。`default=Surrogate(kind="auto")` を新しく許す。`auto` は PERSON→person、ORG→org、FACILITY→facility、LOCATION→location、ADDRESS→address。それ以外の型（EMAIL・PHONE など）は `<TYPE_hmac8>` トークンに退避する（fail-closed）
 - **v0.9.0 の破壊的変更**: (1) `semantic=True` が既定になるので hmac の偽名は v0.8 と変わる（`semantic=False` で従来値。既存のゴールデン値テストは `semantic=False` に付け替えて維持し、`semantic=True` のゴールデン値を追加）、(2) `PseudonymStore` に `iter_tokens` が必要、(3) `Entity` に `vector` フィールドが増える（既定 None。位置引数で作っている呼び出しは影響なし）
 - 同梱の禁止リストによる再抽選は `semantic=False` でも効く（B は既定の挙動にする。これも v0.8 との差分として CHANGELOG に書く）
-- Presidio 互換の名前は変えない（`Surrogate` は Presidio に無い operator）
+- 既存の operator 名は変えない（`Surrogate` は本ライブラリ独自の operator）
 
 ## 11. テスト・検証
 
@@ -246,4 +246,3 @@ Surrogate(
 - 公知判定: `privacy_masker/annotators/knowledge.py`（`PublicKnowledge`、`jawiki_titles_ns0.pmk`）
 - NER: `privacy_masker/char_head.py`（`last_hidden_state` は 805 行付近）、本番モデル（隠れ層 256）
 - 値プール（移植元）: `tools/synth_v11_values.py`（カタカナ外国人名・ローマ字・ひらがな・半角カナ・国名・外国地名）
-- Presidio の置換: `replace`（`<ENTITY_TYPE>`）、Faker は `custom` lambda の例のみ（一貫性なし）、往復は `InstanceCounterAnonymizer` のプレースホルダ方式
