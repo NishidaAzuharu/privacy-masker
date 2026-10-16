@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **文書**: README の `HandleDetector` の説明を実際の検出範囲に合わせて修正。拾うのは `@handle`・行頭の発言者名・`user=` などのキーの値の形だけで、文中にそのまま書かれたハンドル名は拾わない（NER との併用が前提）こと、NER も同じ箇所を拾うと PERSON として扱われることを明記した。動作の変更はなし。
+
 ## 0.11.0 - 2026-10-05
 
 - **examples**: `examples/library_usage.py`・`examples/anonymize_demo.py` の NER を Hub の文字ヘッドモデル（`DEFAULT_MODEL_ID`）に切り替え、

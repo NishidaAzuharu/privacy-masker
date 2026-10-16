@@ -41,7 +41,7 @@ engine = PrivacyEngine(
     detectors=[
         CharHeadNerDetector(model="az225/privacy-masker-ja-pii-ner-30m"),   # 当方の文字単位 NER（Hub から取得。後述）
         RegexDetector.default_ja(),   # 電話番号・メール・マイナンバー・法人番号など
-        HandleDetector(),             # チャット・ログのハンドル名 → USERNAME
+        HandleDetector(),             # @handle・行頭の発言者名・user= の値 → USERNAME（NER の取りこぼしを補う）
     ],
     policy=Policy.preset("llm_input"),   # すべて <TYPE_001> 形式のトークンに
 )
@@ -156,7 +156,7 @@ engine.transform("安倍元総理は奈良市で演説し、田中さんは新�
 
 - **正規表現** `RegexDetector.default_ja()`: EMAIL、PHONE_NUMBER（全角・国際番号・空白区切り）、POSTAL_CODE、CREDIT_CARD（Luhn）、IP_ADDRESS（IPv4 / IPv6）、MAC_ADDRESS、URL、MY_NUMBER（検査用数字）、CORPORATE_NUMBER（法人番号）、PASSPORT、RESIDENCE_CARD、文脈語が必須の DRIVERS_LICENSE・PENSION_NUMBER・BANK_ACCOUNT。`default_ja(dates=True)` で DATE と AGE も検出します。全角の入力は長さを変えない写像で半角化して照合するので、`０４８－２２２－７８１５` のような表記もそのまま拾えます。
 - **NER**: PERSON / ADDRESS / ORG / FACILITY / LOCATION。
-- **ハンドル名** `HandleDetector`: USERNAME（`yuki_t`、`@handle`、`user=…`）。
+- **ハンドル名** `HandleDetector`: USERNAME。`@yuki_t`、行頭の発言者名（`yuki_t: …`、`[09:12] yuki_t: …`）、`user=yuki_t` のようなキーの値など、ハンドル名と分かる書き方だけを規則で拾います。文中にそのまま書かれたハンドル名（「担当 yuki_t」）は拾わないので、NER と併用してください。NER も同じ箇所を拾った場合は PERSON として扱われます。
 - 自前の型は `RegexPattern("PROJECT", re.compile(r"PJ-\d{4}"), score=0.6, context=("案件",))` のように追加できます。
 
 ## 呼び出し時オプション
