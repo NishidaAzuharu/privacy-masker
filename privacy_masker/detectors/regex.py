@@ -3,18 +3,19 @@ from __future__ import annotations
 
 import ipaddress
 import re
-import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
+from ..context_words import compile_context_words, normalize_context
 from ..types import Entity
 
 
 @dataclass(frozen=True)
 class RegexPattern:
-    """正規表現 1 本。score は文脈語なしの信頼度、context の語が前後 context_window 字にあれば context_score に上げる
-    。require_context=True なら文脈語が無いと出さない
-    （7 桁の口座番号のように、数字列だけでは判別できないもの）。"""
+    """正規表現 1 本。score は文脈語なしの信頼度、context の語が前後 context_window 字にあれば context_score に上げる。
+    require_context=True なら文脈語が無いと出さない（7 桁の口座番号のように、数字列だけでは判別できないもの）。
+    文脈語は NFKC・casefold で比べる。英数字だけの語（T・tel）は前後に英数字が続かない単語としてだけ一致し
+    （法人番号の T が test や https に反応しない）、日本語の語は部分一致（privacy_masker.context_words）。"""
 
     entity_type: str
     pattern: "re.Pattern[str]"
@@ -24,6 +25,10 @@ class RegexPattern:
     context_score: float = 1.0
     context_window: int = 30
     require_context: bool = False
+    _context_re: "re.Pattern[str] | None" = field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_context_re", compile_context_words(self.context))
 
 
 class RegexDetector:
@@ -33,7 +38,7 @@ class RegexDetector:
 
     def detect(self, text: str) -> list[Entity]:
         entities: list[Entity] = []
-        norm_cache: dict[tuple[int, int], str] = {}
+        norm_cache: dict[tuple[int, int, int], str] = {}
         # 全角の英数字・記号を半角にした複製に対して照合する（長さは同じなので offset は原文と共通）。
         # 全角の電話番号・カード番号・旅券番号・日付・IP を、パターン側の対応なしで拾える
         haystack = narrow(text)
@@ -42,14 +47,12 @@ class RegexDetector:
                 if p.validator is not None and not p.validator(m.group(0)):
                     continue
                 score = p.score
-                if p.context:
+                if p._context_re is not None:
                     lo, hi = max(0, m.start() - p.context_window), min(len(text), m.end() + p.context_window)
-                    key = (lo, hi)
+                    key = (m.start(), m.end(), p.context_window)   # 窓はスパンと幅で決まる（一致部分は窓に含めない）
                     if key not in norm_cache:
-                        norm_cache[key] = unicodedata.normalize("NFKC", haystack[lo:m.start()] + " " + haystack[m.end():hi]).casefold()
-                    window = norm_cache[key]
-                    hit = any(unicodedata.normalize("NFKC", c).casefold() in window for c in p.context)
-                    if hit:
+                        norm_cache[key] = normalize_context(haystack[lo:m.start()] + " " + haystack[m.end():hi])
+                    if p._context_re.search(norm_cache[key]):
                         score = p.context_score
                     elif p.require_context:
                         continue
@@ -75,21 +78,27 @@ class RegexDetector:
                     rf"(?<![\d{_HY}+])\+\d{{1,3}}(?:[ {_HY}]?\(0\))?(?:[ {_HY}]?\d{{1,4}}){{2,5}}(?![\d{_HY}])"), _intl_phone_ok),
                 RegexPattern("POSTAL_CODE", re.compile(
                     rf"〒\s?\d{{3}}{_H}\d{{4}}|(?<![\d{_HY}])\d{{3}}{_H}\d{{4}}(?![\d{_HY}])")),
+                # カード番号: 主要ブランドの先頭桁（_CARD_IIN）+ Luhn。URL のパスや型番の一部（/4111…・ID_4111…）は境界で弾く。
+                # 検査数字が合うだけなら CHECKSUM_ONLY_SCORE、前後にカード・クレジット等の文脈語があれば 1.0（score_threshold で選べる）
                 RegexPattern("CREDIT_CARD", re.compile(
-                    rf"(?<![\d{_HY}])(?:\d{{13,19}}|\d{{4}}(?:[ {_HY}]\d{{4}}){{3}}|\d{{4}}[ {_HY}]\d{{6}}[ {_HY}]\d{{5}})(?![\d{_HY}])"), _luhn_ok),
+                    rf"{_ID_LB}(?:\d{{13,19}}|\d{{4}}(?:[ {_HY}]\d{{4}}){{3}}|\d{{4}}[ {_HY}]\d{{6}}[ {_HY}]\d{{5}}){_ID_LA}"),
+                    _credit_card_ok, score=CHECKSUM_ONLY_SCORE, context=_CARD_CONTEXT, context_score=1.0),
                 # IPv4: 文末のピリオドは許容する（"from 198.51.100.201." で落とさない）
                 RegexPattern("IP_ADDRESS", re.compile(
                     r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?!\d)(?!\.\d)"), _ipv4_ok),
-                RegexPattern("MY_NUMBER", re.compile(
-                    rf"(?<![\d{_HY}])\d{{12}}(?![\d{_HY}])"), _my_number_ok),
+                # 個人番号: 12 桁 + 検査用数字。文脈語（マイナンバー・個人番号 …）が無ければ CHECKSUM_ONLY_SCORE
+                RegexPattern("MY_NUMBER", re.compile(rf"{_ID_LB}\d{{12}}{_ID_LA}"), _my_number_ok,
+                             score=CHECKSUM_ONLY_SCORE, context=_MY_NUMBER_CONTEXT, context_score=1.0),
                 # 4 桁区切りの個人番号 1234 5678 9018 / 1234-5678-9018（16 桁カード番号の一部は取らない）
                 RegexPattern("MY_NUMBER", re.compile(
-                    rf"(?<![\d{_HY}])(?<!\d[ 　])\d{{4}}[ 　{_HY}]\d{{4}}[ 　{_HY}]\d{{4}}(?![\d{_HY}])(?![ 　]\d)"),
-                    lambda v: _my_number_ok(_digits(v))),
+                    rf"{_ID_LB}(?<!\d[ 　])\d{{4}}[ 　{_HY}]\d{{4}}[ 　{_HY}]\d{{4}}{_ID_LA}(?![ 　]\d)"),
+                    lambda v: _my_number_ok(_digits(v)), score=CHECKSUM_ONLY_SCORE, context=_MY_NUMBER_CONTEXT, context_score=1.0),
                 # ---- v0.8: 日本固有の識別子（Azure PII / Google SDP の日本カバレッジに合わせた）----
-                # 法人番号: 13 桁、先頭が検査用数字。カード番号（Luhn）と衝突したら EntityResolver の優先順位で CREDIT_CARD が勝つ
-                RegexPattern("CORPORATE_NUMBER", re.compile(rf"(?<![\d{_HY}])\d{{13}}(?![\d{_HY}])"), _corporate_number_ok,
-                             score=0.7, context=("法人番号", "法人", "登記", "T"), context_score=1.0),
+                # 法人番号: 13 桁、先頭が検査用数字。登録番号の T1234567890123（T 直結）は許し、ST… のような英字直結は弾く。
+                # カード番号（Luhn）と衝突したら EntityResolver の優先順位で CREDIT_CARD が勝つ
+                RegexPattern("CORPORATE_NUMBER", re.compile(
+                    rf"(?<![\dA-SU-Za-z_/{_HY}])(?<![\dA-Za-z]T)(?<!\d\.)\d{{13}}{_ID_LA}"), _corporate_number_ok,
+                    score=CHECKSUM_ONLY_SCORE, context=("法人番号", "法人", "登記", "登録番号", "T"), context_score=1.0),
                 # 運転免許証番号: 12 桁（マイナンバーと同じ桁数なので文脈必須。検査数字の公式仕様は非公開）
                 RegexPattern("DRIVERS_LICENSE", re.compile(rf"(?<![\d{_HY}])\d{{12}}(?![\d{_HY}])"), None,
                              score=0.0, context=("免許", "運転免許", "免許証"), context_score=0.9, require_context=True),
@@ -141,6 +150,19 @@ def narrow(text: str) -> str:
     # 写像に長さの変わる要素が混入したら、offset がずれるので原文をそのまま使う（防御的）
     return out if len(out) == len(text) else text
 _H = f"[{_HY}]"
+
+# 番号類（カード番号・個人番号・法人番号）の境界。数字・英字・_・/・ハイフンが直結するもの（URL のパス、ID_…、型番）と
+# 小数（0.4111…・…1234.5）は番号としない。文末のピリオド（…1234.）や No.4111… は許す
+_ID_LB = rf"(?<![\dA-Za-z_/{_HY}])(?<!\d\.)"
+_ID_LA = rf"(?![\dA-Za-z_/{_HY}])(?!\.[\dA-Za-z])"
+
+CHECKSUM_ONLY_SCORE = 0.5
+"""検査数字は合うが文脈語の無い数字列（カード番号・個人番号・法人番号）のスコア。既定の閾値 0 ではマスクされ、
+score_threshold を 0.6 などにすると文脈語のあるもの（1.0）だけが残る。"""
+
+_CARD_CONTEXT = ("カード", "クレジット", "card", "credit", "visa", "mastercard", "jcb", "amex", "american express",
+                 "diners", "discover", "有効期限", "セキュリティコード", "cvv", "cvc")
+_MY_NUMBER_CONTEXT = ("マイナンバー", "個人番号", "通知カード", "my number")
 
 
 def _digits(value: str) -> str:
@@ -201,6 +223,22 @@ def _luhn_ok(value: str) -> bool:
                 d -= 9
         total += d
     return total % 10 == 0
+
+
+# 主要ブランドの先頭桁（IIN）。これ以外で始まる Luhn 一致の数字列（IMEI、7 や 9 で始まる伝票番号など）はカード番号としない
+_CARD_IIN = re.compile(
+    r"4"                                              # Visa
+    r"|5\d"                                           # Mastercard 51–55、Maestro 50・56–59
+    r"|6\d"                                           # Discover 6011・65・644–649、銀聯 62、Maestro 60–69
+    r"|3[47]"                                         # American Express
+    r"|35(?:2[89]|[3-8]\d)"                           # JCB 3528–3589
+    r"|30[0-5]|3[689]"                                # Diners Club
+    r"|2(?:22[1-9]|2[3-9]\d|[3-6]\d\d|7[01]\d|720)"   # Mastercard 2221–2720
+)
+
+
+def _credit_card_ok(value: str) -> bool:
+    return _CARD_IIN.match(_digits(value)) is not None and _luhn_ok(value)
 
 
 def _ipv4_ok(value: str) -> bool:

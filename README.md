@@ -72,7 +72,7 @@ print(result.text)
 ```
 
 - **Refiner**: 既定の `SpanRefiner` は文字種の規則で端の空白・敬称・助詞を削り、隣接する種別語尾・法人格・住所末尾を取り込みます（PII を落とす方向の変更はしません）。`MorphologicalRefiner` は品詞で判定し、スパンを形態素境界に揃えます。
-- **Resolver**: 重なった検出結果は型の優先順位（MY_NUMBER > CREDIT_CARD > EMAIL > PHONE_NUMBER > PERSON > ADDRESS > …）で決め、同じ型ならスコア、同点なら長い方を採ります。
+- **Resolver**: 重なった検出結果は型の優先順位（MY_NUMBER > CREDIT_CARD > EMAIL > PHONE_NUMBER > PERSON > ADDRESS > …）で決め、同じ型ならスコア、同点なら長い方を採ります。URL・EMAIL の内側に完全に収まる検出（`?card=4111…` のカード番号、メールのローカル部の 12 桁など）は優先順位に関わらず外側に吸収し、URL やメールアドレスを分断しません（`EntityResolver(container_types=())` で無効化）。
 - **Policy**: 型ごとに Operator を割り当てます。プリセットは `llm_input` / `strict`（連番トークン）、`dataset`（HMAC トークン）、`standard` / `minimal`（公知の実体は残す）。
 
 ## トークン化の 3 戦略
@@ -154,10 +154,11 @@ engine.transform("安倍元総理は奈良市で演説し、田中さんは新�
 
 ## 検出できる型
 
-- **正規表現** `RegexDetector.default_ja()`: EMAIL、PHONE_NUMBER（全角・国際番号・空白区切り）、POSTAL_CODE、CREDIT_CARD（Luhn）、IP_ADDRESS（IPv4 / IPv6）、MAC_ADDRESS、URL、MY_NUMBER（検査用数字）、CORPORATE_NUMBER（法人番号）、PASSPORT、RESIDENCE_CARD、文脈語が必須の DRIVERS_LICENSE・PENSION_NUMBER・BANK_ACCOUNT。`default_ja(dates=True)` で DATE と AGE も検出します。全角の入力は長さを変えない写像で半角化して照合するので、`０４８－２２２－７８１５` のような表記もそのまま拾えます。
+- **正規表現** `RegexDetector.default_ja()`: EMAIL、PHONE_NUMBER（全角・国際番号・空白区切り）、POSTAL_CODE、CREDIT_CARD（主要ブランドの先頭桁 + Luhn）、IP_ADDRESS（IPv4 / IPv6）、MAC_ADDRESS、URL、MY_NUMBER（検査用数字）、CORPORATE_NUMBER（法人番号）、PASSPORT、RESIDENCE_CARD、文脈語が必須の DRIVERS_LICENSE・PENSION_NUMBER・BANK_ACCOUNT。`default_ja(dates=True)` で DATE と AGE も検出します。全角の入力は長さを変えない写像で半角化して照合するので、`０４８－２２２－７８１５` のような表記もそのまま拾えます。
+- **番号類のスコア**: CREDIT_CARD・MY_NUMBER・CORPORATE_NUMBER は、検査数字が合うだけなら 0.5、前後 30 字に文脈語（カード・クレジット / マイナンバー・個人番号 / 法人番号・登録番号・`T` …）があれば 1.0 です。既定（閾値 0）ではどちらもマスクされ、`score_threshold={"MY_NUMBER": 0.6, "CREDIT_CARD": 0.6}` のように閾値を上げると、伝票番号などが偶然検査数字に合っただけの数字列を外せます。英字・`_`・`/`・小数点が直結した数字列（`ID_4111…`、URL のパス、`0.4111…`）は番号として取りません。
 - **NER**: PERSON / ADDRESS / ORG / FACILITY / LOCATION。
 - **ハンドル名** `HandleDetector`: USERNAME。`@yuki_t`、行頭の発言者名（`yuki_t: …`、`[09:12] yuki_t: …`）、`user=yuki_t` のようなキーの値など、ハンドル名と分かる書き方だけを規則で拾います。文中にそのまま書かれたハンドル名（「担当 yuki_t」）は拾わないので、NER と併用してください。NER も同じ箇所を拾った場合は PERSON として扱われます。
-- 自前の型は `RegexPattern("PROJECT", re.compile(r"PJ-\d{4}"), score=0.6, context=("案件",))` のように追加できます。
+- 自前の型は `RegexPattern("PROJECT", re.compile(r"PJ-\d{4}"), score=0.6, context=("案件",))` のように追加できます。文脈語は NFKC・小文字化して前後 30 字（`context_window`）と比べ、英数字だけの語（`T`・`tel`）は前後に英数字が続かない単語としてだけ一致します（日本語の語は部分一致）。
 
 ## 呼び出し時オプション
 
@@ -175,7 +176,7 @@ result.entities[0].explanation
 ```
 
 `explain` の文字列は検出器名・スコア・位置・型だけで、原文の文字を含みません。`PrivacyEngine(...)` に同名の引数を渡すと既定値になります。
-`ContextEnhancer()` を加えると、スパンの前後に型ごとの手掛かり語（氏名・住所・電話 …）があるとき score を上げられ、`score_threshold` と組み合わせて「文脈のない低スコア検出だけを落とす」運用ができます。
+`ContextEnhancer()` を加えると、スパンの前後に型ごとの手掛かり語（氏名・住所・電話 …）があるとき score を上げられ、`score_threshold` と組み合わせて「文脈のない低スコア検出だけを落とす」運用ができます。手掛かり語の照合規則は `RegexPattern` の文脈語と同じです。
 
 ## オペレータ一覧
 

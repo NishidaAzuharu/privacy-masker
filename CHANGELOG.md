@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **正規表現の番号類（CREDIT_CARD・MY_NUMBER・CORPORATE_NUMBER）の誤検出対策**（`RegexDetector.default_ja()`）:
+  - 文脈語の照合を `privacy_masker.context_words` に切り出し、英数字だけの語（法人番号の `T`、`tel`、`id`）は前後に英数字が続かない単語としてだけ
+    一致させる（`test`・`https` の t で CORPORATE_NUMBER が 1.0 になっていた）。日本語の語は従来通り部分一致。`ContextEnhancer` も同じ規則にした
+    （`mail` が `email` に、`id` が `valid` に部分一致しなくなるため、EMAIL の手掛かり語に `email`、USERNAME に `user`・`username`・`userid` を追加）。
+  - CREDIT_CARD は主要ブランドの先頭桁（Visa 4、Mastercard 51–55・2221–2720、American Express 34・37、JCB 3528–3589、Diners Club 30・36・38・39、
+    Discover・銀聯・Maestro の 5x・6x）+ Luhn に限定（IMEI や 7・9 で始まる伝票番号を取らない）。CREDIT_CARD・MY_NUMBER・CORPORATE_NUMBER は
+    英字・`_`・`/`・小数点が直結した数字列（`ID_4111…`、URL のパス `/4111…`、`0.4111…`、`…1234.5`）を取らない（文末のピリオドと `No.4111…` は従来通り）。
+    法人番号は登録番号の `T` 直結（`T1234567890123`）だけ英字直結を許す（`ST…` は型番として弾く）。
+  - 検査数字は合うが文脈語の無い CREDIT_CARD・MY_NUMBER・CORPORATE_NUMBER のスコアを 0.5（`CHECKSUM_ONLY_SCORE`）に、文脈語
+    （カード・クレジット / マイナンバー・個人番号 / 法人番号・登録番号・`T`）があれば 1.0 に（CORPORATE_NUMBER の文脈なしは 0.7 → 0.5）。
+    既定（閾値 0）では従来通り全部マスクされ、`score_threshold={"MY_NUMBER": 0.6}` のように閾値を上げると文脈語の無い数字列を外せる。
+  - `EntityResolver(container_types=("URL", "EMAIL"))`: URL・EMAIL の内側に完全に収まる検出は優先順位に関わらず外側に吸収する。
+    `https://…/?card=4111…` が `<URL_001><CREDIT_CARD_001>` に分断されず `<URL_001>` に、`123456789018@example.com` が `<EMAIL_001>` になる
+    （`container_types=()` で従来の挙動）。
+  - テスト `tests/test_regex_number_false_positives.py`。README「仕組み」「検出できる型」に反映。
 - **文書**: README の `HandleDetector` の説明を実際の検出範囲に合わせて修正。拾うのは `@handle`・行頭の発言者名・`user=` などのキーの値の形だけで、文中にそのまま書かれたハンドル名は拾わない（NER との併用が前提）こと、NER も同じ箇所を拾うと PERSON として扱われることを明記した。動作の変更はなし。
 
 ## 0.11.0 - 2026-10-05

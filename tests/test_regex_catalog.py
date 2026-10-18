@@ -17,7 +17,7 @@ def test_corporate_number_check_digit_and_context():
     body = "000012050002"
     num = f"{corporate_check_digit(body)}{body}"
     assert found(f"法人番号 {num} の会社", "CORPORATE_NUMBER") == [(num, 1.0)]
-    assert found(f"番号は {num} です", "CORPORATE_NUMBER") == [(num, 0.7)]       # 文脈なしは基本スコア
+    assert found(f"番号は {num} です", "CORPORATE_NUMBER") == [(num, 0.5)]       # 文脈なしは検査数字だけのスコア
     bad = f"{(corporate_check_digit(body) + 1) % 10}{body}"
     assert found(f"法人番号 {bad}", "CORPORATE_NUMBER") == []                       # 検査用数字が合わない
 

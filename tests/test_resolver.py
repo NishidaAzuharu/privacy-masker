@@ -78,3 +78,19 @@ def test_resolver_keeps_vector_when_trimming():
     persons = [e for e in out if e.entity_type == "PERSON"]
     assert persons, "PERSON が丸ごと消えている（重なりの外側は残るはず）"
     assert all(e.vector == b"\x01\x02" for e in persons)
+
+
+def test_container_types_absorb_inner_entities_regardless_of_priority():
+    # URL(0-40) ⊃ CREDIT_CARD(24-40): 優先順位は CREDIT_CARD が上だが URL を分断しない
+    r = EntityResolver()
+    assert r.resolve([E("CREDIT_CARD", 24, 40), E("URL", 0, 40)]) == [E("URL", 0, 40)]
+    assert r.resolve([E("MY_NUMBER", 0, 12), E("EMAIL", 0, 24)]) == [E("EMAIL", 0, 24)]
+    assert r.resolve([E("EMAIL", 20, 33), E("URL", 0, 40)]) == [E("URL", 0, 40)]        # 入れ子の container も同様
+    # 部分的な重なり・同じ範囲は従来通り優先順位で決める
+    assert r.resolve([E("CREDIT_CARD", 30, 46), E("URL", 0, 40)]) == [E("URL", 0, 30), E("CREDIT_CARD", 30, 46)]
+    assert r.resolve([E("MY_NUMBER", 0, 12), E("EMAIL", 0, 12)]) == [E("MY_NUMBER", 0, 12)]
+
+
+def test_container_types_can_be_disabled():
+    r = EntityResolver(container_types=())
+    assert r.resolve([E("CREDIT_CARD", 24, 40), E("URL", 0, 40)]) == [E("URL", 0, 24), E("CREDIT_CARD", 24, 40)]

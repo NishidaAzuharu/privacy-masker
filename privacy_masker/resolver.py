@@ -32,14 +32,20 @@ DEFAULT_PRIORITY = [
     "MAC_ADDRESS",
 ]
 
+# 内側に完全に収まる他の検出を丸ごと吸収する型。URL の ?card=4111… やメールのローカル部の 12 桁を
+# CREDIT_CARD / MY_NUMBER として切り出すと URL・メールが分断されるので、優先順位に関わらず外側を採る
+DEFAULT_CONTAINER_TYPES = ("URL", "EMAIL")
+
 
 class EntityResolver:
-    def __init__(self, priority: Sequence[str] | None = None, min_score: float = 0.0) -> None:
+    def __init__(self, priority: Sequence[str] | None = None, min_score: float = 0.0,
+                 container_types: Sequence[str] = DEFAULT_CONTAINER_TYPES) -> None:
         self.priority = list(priority) if priority is not None else list(DEFAULT_PRIORITY)
         self.min_score = min_score
+        self.container_types = frozenset(container_types)
 
     def resolve(self, entities: Sequence[Entity]) -> list[Entity]:
-        cands = [e for e in entities if e.score >= self.min_score]
+        cands = self._absorb_into_containers([e for e in entities if e.score >= self.min_score])
         prio = {t: i for i, t in enumerate(self.priority)}
         next_idx = len(self.priority)
         for e in cands:  # リスト外typeは検出結果への出現順で末尾に付ける
@@ -85,3 +91,15 @@ class EntityResolver:
                 if s1 > s0:
                     push(dataclasses.replace(e, start=s0, end=s1), reg)
         return sorted(adopted, key=lambda a: a.start)
+
+    def _absorb_into_containers(self, cands: list[Entity]) -> list[Entity]:
+        """container_types の内側に完全に収まる（かつ範囲がより短い）検出を落とす。同じ範囲どうしは優先順位に任せる。"""
+        boxes = [b for b in cands if b.entity_type in self.container_types]
+        if not boxes:
+            return cands
+
+        def inside(e: Entity) -> bool:
+            return any(b is not e and b.start <= e.start and e.end <= b.end and (b.end - b.start) > (e.end - e.start)
+                       for b in boxes)
+
+        return [e for e in cands if not inside(e)]
