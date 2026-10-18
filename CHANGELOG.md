@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 - 2026-10-18
 
 - **正規表現の番号類（CREDIT_CARD・MY_NUMBER・CORPORATE_NUMBER）の誤検出対策**（`RegexDetector.default_ja()`）:
   - 文脈語の照合を `privacy_masker.context_words` に切り出し、英数字だけの語（法人番号の `T`、`tel`、`id`）は前後に英数字が続かない単語としてだけ

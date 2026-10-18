@@ -3,7 +3,7 @@ from privacy_masker import exceptions, entity_types
 
 
 def test_version():
-    assert privacy_masker.__version__ == "0.11.0"
+    assert privacy_masker.__version__ == "0.12.0"
 
 
 def test_exception_hierarchy():
