@@ -1,6 +1,10 @@
+import importlib.util
+
 import pytest
 
-pytest.importorskip("janome", reason="requires [janome] extra")
+if importlib.util.find_spec("janome") is None:
+    pytest.importorskip("fugashi", reason="requires janome or fugashi + ipadic")
+    pytest.importorskip("ipadic", reason="requires janome or fugashi + ipadic")
 
 from privacy_masker.engine import PrivacyEngine
 from privacy_masker.operators import Surrogate
@@ -52,6 +56,82 @@ def test_trims_honorific_suffix_for_person_only(refiner):
     # ORGでは接尾トリムはしない（人名接尾のみが対象なので影響なし）
     text2 = "田中さんは休み"
     assert spans(refiner, text2, [E("ORG", 0, 2)]) == [(0, 2, "ORG")]
+
+
+@pytest.fixture(scope="module", params=["fugashi", "janome"])
+def backend_refiner(request):
+    pytest.importorskip(request.param)
+    if request.param == "fugashi":
+        pytest.importorskip("ipadic")
+    return MorphologicalRefiner(backend=request.param)
+
+
+@pytest.mark.parametrize("text,entity_type,end,expected_end", [
+    ("悠人様に確認します。", "PERSON", 2, 2),
+    ("悠人さまの件です。", "PERSON", 2, 2),
+    ("小鳥遊氏が来社。", "PERSON", 3, 3),
+    ("田中さんに確認します。", "PERSON", 3, 2),
+    ("田中さんに確認します。", "PERSON", 4, 2),
+    ("東雲さんに連絡", "PERSON", 1, 2),
+    ("君塚に確認します。", "PERSON", 1, 2),
+    ("寅さんの件です。", "ORG", 2, 3),
+    # モデルが既に含めた敬称や対象外の型は、新しい規則では削らない。
+    ("悠人様に確認します。", "PERSON", 3, 3),
+    ("悠人様に確認します。", "ORG", 2, 3),
+])
+def test_honorific_snap_boundaries(backend_refiner, text, entity_type, end, expected_end):
+    assert spans(backend_refiner, text, [E(entity_type, 0, end)]) == [
+        (0, expected_end, entity_type)]
+
+
+@pytest.mark.parametrize("text,start,end,expected_start,expected_end", [
+    ("王様に確認します。", 0, 1, 0, 2),
+    ("殿様に確認します。", 0, 1, 0, 2),
+    ("若様に確認します。", 0, 1, 0, 2),
+    ("坊ちゃんに確認します。", 0, 1, 0, 4),
+    ("お嬢様に確認します。", 1, 2, 0, 3),
+    ("担当：佐藤　王様に確認します。", 3, 7, 3, 7),
+    ("佐藤　王様に確認します。", 0, 4, 0, 4),
+])
+def test_honorific_snap_preserves_safe_expansion(
+        backend_refiner, text, start, end, expected_start, expected_end):
+    assert spans(backend_refiner, text, [E("PERSON", start, end)]) == [
+        (expected_start, expected_end, "PERSON")]
+
+
+@pytest.mark.parametrize("honorific", ["さん", "さま", "様", "氏", "くん", "ちゃん", "君", "殿"])
+@pytest.mark.parametrize("core,start,end,expand", [
+    ("悠人", 0, 2, False),
+    ("悠人", 1, 2, True),
+    ("悠 人", 0, 3, False),
+    ("悠　人", 0, 3, False),
+    (" 人", 0, 2, True),
+    ("　人", 0, 2, True),
+])
+def test_single_morpheme_snap_uses_original_nonspace_length(
+        backend_refiner, honorific, core, start, end, expand):
+    text = core + honorific
+    morphemes = [(0, len(text), "名詞,一般,*,*")]
+    char_to_m = dict.fromkeys(range(len(text)), 0)
+    ent = E("PERSON", start, end)
+    out = backend_refiner._snap_one(text, morphemes, char_to_m, ent)
+    assert (out.start, out.end) == (0, len(text) if expand else end)
+
+
+@pytest.mark.parametrize("text,end", [("悠人寅さん", 2), ("悠人君塚", 2)])
+def test_snap_expands_remainder_longer_than_honorific(refiner, text, end):
+    # 敬称を含む固有名詞や敬称で始まる残りも、完全一致しなければ拡張する。
+    morphemes = [(0, len(text), "名詞,固有名詞,人名,名")]
+    char_to_m = dict.fromkeys(range(len(text)), 0)
+    out = refiner._snap_one(text, morphemes, char_to_m, E("PERSON", 0, end))
+    assert (out.start, out.end) == (0, len(text))
+
+
+@pytest.mark.parametrize("honorific_types,expected_end", [((), 3), (("ORG",), 2)])
+def test_honorific_snap_respects_configured_types(backend_refiner, honorific_types, expected_end):
+    r = MorphologicalRefiner(backend=backend_refiner.backend, honorific_types=honorific_types)
+    assert spans(r, "悠人様に確認します。", [E("ORG", 0, 2)]) == [
+        (0, expected_end, "ORG")]
 
 
 def test_trims_leading_particle(refiner):
@@ -114,6 +194,7 @@ def test_proper_noun_anchor_allows_trim(refiner):
 
 
 def test_user_dict_enables_confident_trim(tmp_path):
+    pytest.importorskip("janome", reason="user_dict requires janome")
     # ユーザー辞書に「みこと」を固有名詞として登録すると、境界を確信して削れる
     udic = tmp_path / "names.csv"
     udic.write_text(

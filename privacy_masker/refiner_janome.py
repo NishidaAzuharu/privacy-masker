@@ -169,6 +169,13 @@ class MorphologicalRefiner:
             return ent  # 形態素で覆われない位置（防御的にそのまま）
         s_new = morphemes[ms][0]
         e_new = morphemes[me][1]
+        # 名前と敬称が同じ形態素でも、NERが敬称の直前で切っていれば末尾は広げない。
+        # 既に含まれた文字は削らず、追加部分が敬称と完全一致するときだけ抑止する。
+        # 元スパンが空白を除いて1文字の断片なら、従来どおり語全体へ広げる安全側にする。
+        if (ent.entity_type in self.honorific_types and e_new > ent.end
+                and sum(not ch.isspace() for ch in text[ent.start:ent.end]) >= 2
+                and text[ent.end:e_new] in _DEFAULT_HONORIFICS_JA):
+            e_new = ent.end
         if ms != me:
             # 端が付属語・記号の形態素の途中なら、その側は拡張しない（付属語を名前に取り込まない）
             if e_new > ent.end and morphemes[me][2].startswith(_TRIM_POS):
