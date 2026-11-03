@@ -48,6 +48,79 @@ def test_honorific_only_span_is_kept():
     assert spans(text, [E("PERSON", 0, 2)]) == [(0, 2, "PERSON")]
 
 
+def test_trims_partial_honorific_for_person():
+    for text, end, expected_end in [
+        ("田中さんに確認", 3, 2),
+        ("佐藤くんと", 3, 2),
+        ("鈴木ちゃんは", 4, 2),
+        ("鈴木ちゃんは", 3, 2),
+        ("ありささんは", 4, 3),
+    ]:
+        assert spans(text, [E("PERSON", 0, end)]) == [(0, expected_end, "PERSON")]
+
+
+def test_partial_honorific_preserves_span_start_and_fields():
+    text = "担当は田中さんです"
+    got = SpanRefiner().refine(text, [E("PERSON", 3, 6, score=0.7)])
+    assert got == [E("PERSON", 3, 5, score=0.7)]
+
+
+def test_partial_honorific_requires_matching_remainder():
+    for text in ("田中さ", "田中さに確認", "田中さ んに確認"):
+        assert spans(text, [E("PERSON", 0, 3)]) == [(0, 3, "PERSON")]
+    # 残りの先頭だけでなく、残り全体が一致する必要がある
+    assert spans("鈴木ちゃに確認", [E("PERSON", 0, 3)]) == [(0, 3, "PERSON")]
+
+
+def test_partial_honorific_sama_is_kept():
+    # 名前の末尾の「さ」と、続く語の「ま」を敬称と取り違えない
+    for text in ("かずさまで行く", "田中さまに確認"):
+        assert spans(text, [E("PERSON", 0, 3)]) == [(0, 3, "PERSON")]
+
+
+def test_partial_honorific_requires_two_non_whitespace_characters():
+    for text, start, end in [("あさんは", 0, 2), ("担当はあさんは", 3, 5),
+                             ("あ \tさ ん", 0, 4), ("あ \tさんは", 0, 4),
+                             ("さんは", 0, 1)]:
+        assert spans(text, [E("PERSON", start, end)]) == [(start, end, "PERSON")]
+    assert spans("田 中さんは", [E("PERSON", 0, 4)]) == [(0, 3, "PERSON")]
+
+
+def test_partial_honorific_not_trimmed_for_org():
+    assert spans("田中さんに確認", [E("ORG", 0, 3)]) == [(0, 3, "ORG")]
+
+
+def test_partial_honorific_respects_configured_types():
+    text = "田中さんに確認"
+    assert spans(text, [E("PERSON", 0, 3)], honorific_types=()) == [(0, 3, "PERSON")]
+    assert spans(text, [E("ORG", 0, 3)], honorific_types=("ORG",)) == [(0, 2, "ORG")]
+
+
+def test_partial_honorific_can_be_disabled():
+    assert spans("田中さんに確認", [E("PERSON", 0, 3)], honorifics=()) == [(0, 3, "PERSON")]
+
+
+def test_partial_honorific_respects_custom_honorifics():
+    # カスタム敬称でも、残りが「ん」または指定の小書き仮名から始まる場合だけ削る
+    for remainder in "んぁぃぅぇぉゃゅょっ":
+        text = "田中せ" + remainder
+        assert spans(text, [E("PERSON", 0, 3)], honorifics=("せ" + remainder,)) == [(0, 2, "PERSON")]
+    assert spans("田中せま", [E("PERSON", 0, 3)], honorifics=("せま",)) == [(0, 3, "PERSON")]
+    assert spans("田中さん", [E("PERSON", 0, 3)], honorifics=("くん",)) == [(0, 3, "PERSON")]
+
+
+def test_partial_honorific_matches_longest_first():
+    # 短い敬称を先に指定しても、「っちゃん」の途中として照合する
+    text = "田中っちゃん"
+    assert spans(text, [E("PERSON", 0, 4)], honorifics=("ちゃん", "っちゃん")) == [(0, 2, "PERSON")]
+
+
+def test_partial_honorific_trim_is_hard_capped_across_passes():
+    # 重なって一致するカスタム敬称でも、fixpointループで繰り返し削らない
+    text = "田中っっっっ"
+    assert spans(text, [E("PERSON", 0, 4)], honorifics=("っっっ",)) == [(0, 3, "PERSON")]
+
+
 # ---- 助詞トリム（非ひらがなアンカーのみ） ----
 
 def test_trims_trailing_particle_after_kanji_or_katakana():

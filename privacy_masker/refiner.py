@@ -9,6 +9,8 @@ tokenizerの語彙結合（「日本の」「田中さん」が1トークン等�
 
 既知の限界: 「田中さんの」のように敬称+助詞が連続し、かつ助詞のアンカーが
 ひらがなになる場合は助詞側を削れない（安全側に倒れて残る）。
+敬称の途中で切れたスパンも、直後が敬称の残りと一致し、その先頭が「ん」または
+小書き仮名なら補正する。「さ|ま」は名前の末尾を削るおそれがあるため対象外。
 """
 from __future__ import annotations
 
@@ -44,6 +46,8 @@ class SpanRefiner:
 
     - trim_whitespace: スパン端の空白・改行を削る（全type）
     - honorifics: 末尾の敬称を削る（honorific_typesのtypeのみ。()で無効）
+      敬称の途中で切れた場合も、直後の残りが「ん」・小書き仮名で始まり、
+      空白以外の文字が2文字以上残るときは累積1回まで削る
     - particles: 端の助詞runを削る。誤削り防止のため、削った後に残る端の文字が
       ひらがなの場合は削らない（「りの」のようなひらがな終わりの名前を守る）。
       ""で無効
@@ -112,6 +116,7 @@ class SpanRefiner:
         tail_budget = _MAX_PARTICLE_RUN
         head_budget = _MAX_PARTICLE_RUN
         fw_budget = 1
+        partial_honorific_budget = 1
         changed = True
         while changed and s < e:
             changed = False
@@ -128,6 +133,20 @@ class SpanRefiner:
                         e -= len(h)
                         changed = True
                         break
+                if partial_honorific_budget:
+                    # 敬称の続きが「ん」・小書き仮名なら、途中まで巻き込んだ部分を削る。
+                    # 「さ|ま」は名前の末尾と次の語の先頭にもなり得るため削らない。
+                    for h in sorted(self.honorifics, key=len, reverse=True):
+                        for k in range(1, len(h)):
+                            if (h[k] in "んぁぃぅぇぉゃゅょっ" and e - k > s
+                                    and text[e - k:e] == h[:k] and text.startswith(h[k:], e)
+                                    and sum(not ch.isspace() for ch in text[s:e - k]) >= 2):
+                                e -= k
+                                partial_honorific_budget -= 1
+                                changed = True
+                                break
+                        if not partial_honorific_budget:
+                            break
             if fw_budget and self.function_words:
                 for fw in self.function_words:
                     if (e - s > len(fw) and text.startswith(fw, e - len(fw))
