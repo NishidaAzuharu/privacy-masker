@@ -131,7 +131,7 @@ Generator が受け取るのは次の特徴だけ。元の値そのものは渡�
 | FACILITY 文化・観光 | `{地名\|コア}{美術館\|博物館\|温泉\|水族館}` |
 | LOCATION | 粒度を保存。国 → 別の国名、都道府県 → 同ブロックの別の都道府県、市区町村 → 同ブロックの別の市区町村（`PREF_CITIES` を全都道府県・主要市に拡充）、町域 → 別の町域、地区・通称 → `{地名}駅前` 等、外国の都市 → カタカナ外国地名プール、自然地形 → `{コア}{山\|川\|湖\|岬}` |
 | ADDRESS | 既存の生成器 + 都道府県を同ブロックに |
-| PERSON | 既存の生成器 + 名のプールを性別傾向で選ぶ（不明なら混合）。カタカナ外国人名・ローマ字・ひらがな・半角カナはそれぞれのプール（学習データ生成ツールの値プール `tools/synth_v11_values.py` から移植） |
+| PERSON | 既存の生成器 + 名のプールを性別傾向で選ぶ（不明なら混合）。カタカナ外国人名・ローマ字・ひらがな・半角カナはそれぞれのプール（学習データ生成ツールの値プールから移植） |
 
 型レベルの生成器（退避先）= 現状の `generate_person / generate_org / generate_address` と、FACILITY・LOCATION 用の「その他」テンプレート。
 
@@ -156,10 +156,10 @@ Generator が受け取るのは次の特徴だけ。元の値そのものは渡�
 （重みとバイアス）と `category_head.json`（型ごとのカテゴリ名、`min_margin` の推奨値、encoder の `model.safetensors` の SHA-256、学習データの SHA、保留精度）。
 `load_char_model` が読み、encoder の SHA が一致しなければ読まない（別モデルの隠れ状態には使えない）。
 
-**学習**（`tools/train_category_head.py`、CPU 数分）
+**学習**（学習ツール、CPU 数分）
 
 - 入力: 本番 NER モデル（凍結）で 学習データ（train / valid）と Wikipedia・GSD の ORG / FACILITY / LOCATION スパンのベクトルを計算
-- ラベル: 合成層は差し込んだ値のカテゴリ（学習データ生成ツール `tools/synth_v11_fill.py` と前の世代の生成器の form を §4 の体系に写像）、実テキストは `RuleCategorizer` で付く分だけ（付かないものは学習に使わない）
+- ラベル: 合成層は差し込んだ値のカテゴリ（学習データ生成ツールと前の世代の生成器の form を §4 の体系に写像）、実テキストは `RuleCategorizer` で付く分だけ（付かないものは学習に使わない）
 - **種別語を隠す拡張**: 学習スパンの 30% で、本文から種別語（`病院` `株式会社` `市` …）を削った写しを作り、削った後の文で再びベクトルを計算して同じラベルで学習する。
   ヘッドが種別語のトークンだけに頼らず、文脈（attention 経由）から決められるようにする
 - 検証は文書単位で分け、valid の (i) 規則ラベル付きスパンの macro accuracy、(ii) **種別語を削った**スパンの accuracy と、`min_margin` ごとの「その他に落とさなかったもの」の precision を出す
@@ -225,7 +225,7 @@ Surrogate(
 1. 土台: `Entity.vector`、`TransformContext.text`、`PseudonymStore.iter_tokens`（Memory / SQLite）、`CharHeadNerDetector` のスパンベクトル出力
 2. `RuleCategorizer` + `Features` + カテゴリ別生成器 + `SafetyFilter`（分類ヘッド無しで動く状態。ゴールデン値を作る）
 3. 禁止リストの生成ツールと同梱、`knowledge=` 連携
-4. `tools/train_category_head.py`、`HeadCategorizer`、`load_char_model` での読み込み、本番モデルへの配置
+4. 学習ツール、`HeadCategorizer`、`load_char_model` での読み込み、本番モデルへの配置
 5. `strategy="vault"` と `restore()` の拡張、往復テスト
 6. §11 の検証テスト一式、README「Surrogate」節と仕様（`2026-08-08-privacy-masker-design.md`）の追補、CHANGELOG（v0.9.0）、開発記録
 
@@ -245,4 +245,4 @@ Surrogate(
 - 現行実装: `privacy_masker/operators/surrogate.py`、`privacy_masker/data/ja_pools.py`、仕様 §21・§22（`docs/superpowers/specs/2026-08-08-privacy-masker-design.md`）
 - 公知判定: `privacy_masker/annotators/knowledge.py`（`PublicKnowledge`、`jawiki_titles_ns0.pmk`）
 - NER: `privacy_masker/char_head.py`（`last_hidden_state` は 805 行付近）、本番モデル（隠れ層 256）
-- 値プール（移植元）: `tools/synth_v11_values.py`（カタカナ外国人名・ローマ字・ひらがな・半角カナ・国名・外国地名）
+- 値プール（移植元）: 学習データ生成ツールの値プール（カタカナ外国人名・ローマ字・ひらがな・半角カナ・国名・外国地名）

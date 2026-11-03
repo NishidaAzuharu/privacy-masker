@@ -60,7 +60,7 @@ print(result.text)
 ライブラリ本体はモデルを同梱しません。次のどちらかを使います。
 
 - **Hugging Face の token-classification モデル**: `TransformersNerDetector(model=..., label_map=...)`。ラベル名を `PERSON` / `ORG` / `ADDRESS` / `LOCATION` / `FACILITY` に対応付けます。
-- **文字単位ヘッド付きの自前モデル**: `CharHeadNerDetector(model=<フォルダ または Hugging Face Hub のリポジトリ ID>)`。日本語のサブワード境界に左右されない文字単位のスパンを出します。Hub のリポジトリ ID（`owner/name`）を渡すと推論に必要なファイルだけを取得してキャッシュします（`revision=` で固定、`local_files_only=True` でオフライン）。当方が `cl-nagoya/ruri-v3-30m` を基に学習したモデルは Hugging Face Hub の [`az225/privacy-masker-ja-pii-ner-30m`](https://huggingface.co/az225/privacy-masker-ja-pii-ner-30m)（Apache-2.0）で配布しています: `CharHeadNerDetector(model="az225/privacy-masker-ja-pii-ner-30m")`。構成・学習データ・評価はモデルカードに、学習・評価のスクリプトは `tools/` にあります。
+- **文字単位ヘッド付きの自前モデル**: `CharHeadNerDetector(model=<フォルダ または Hugging Face Hub のリポジトリ ID>)`。日本語のサブワード境界に左右されない文字単位のスパンを出します。Hub のリポジトリ ID（`owner/name`）を渡すと推論に必要なファイルだけを取得してキャッシュします（`revision=` で固定、`local_files_only=True` でオフライン）。当方が `cl-nagoya/ruri-v3-30m` を基に学習したモデルは Hugging Face Hub の [`az225/privacy-masker-ja-pii-ner-30m`](https://huggingface.co/az225/privacy-masker-ja-pii-ner-30m)（Apache-2.0）で配布しています: `CharHeadNerDetector(model="az225/privacy-masker-ja-pii-ner-30m")`。構成・学習データ・評価はモデルカードに、評価のスクリプトは `tools/` にあります。
 
 どのモデルでも、導入前に自分の文書で評価することを勧めます（後述「評価」）。
 

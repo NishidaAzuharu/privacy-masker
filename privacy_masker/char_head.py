@@ -1284,7 +1284,7 @@ def category_loss(
 
 
 def sqrt_class_weights(counts: Mapping[str, int], categories: Sequence[str], cap: float = 5.0) -> list[float]:
-    """クラス頻度の平方根の逆数を平均 1 に正規化し ``cap`` で切る（`tools/train_category_head._class_weights(mode="sqrt")` と同値）。無いクラスは 0。"""
+    """クラス頻度の平方根の逆数を平均 1 に正規化し ``cap`` で切る（学習側の class weight と同じ規則）。無いクラスは 0。"""
     inv = [(1.0 / math.sqrt(counts[c])) if counts.get(c, 0) > 0 else 0.0 for c in categories]
     total = sum(inv)
     k = len(categories)

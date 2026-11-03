@@ -2,9 +2,9 @@
 
 盲検セットの表層をテストやドキストリングの例に使うと、(a) 評価セットの内容が学習・生成の側へ
 漏れ、(b) 実在の個人を指しうる表層がパッケージに同梱されてしまう。表層の正本はデータフォルダの
-``blind_eval_v1/eval_surfaces.json``（リポジトリには入れない。tools/build_data_v7.py が読む）にあり、
+``blind_eval_v1/eval_surfaces.json``（リポジトリには入れない）にあり、
 この検査は ``tests/`` と ``privacy_masker/`` の ``*.py`` / ``*.json``、``docs/`` と ``examples/``、README・CHANGELOG・
-主要な tools を走査してこの規約を守らせる。
+を走査してこの規約を守らせる。
 
 **この検査ファイル自体にも表層を置かない**（16 進やハッシュでも短い表層は総当たりで戻るので、リポジトリには
 何も置かない）。表層は実行時にデータフォルダの正本から読み、無い環境では走査のテストを skip する。
@@ -17,13 +17,8 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_DIRS = (("tests", (".py", ".json")), ("privacy_masker", (".py", ".json")), ("docs", (".md",)), ("examples", (".py",)))
-# 配布物として読まれる文書・表層を扱うツールも対象にする
-SCAN_FILES = ("README.md", "CHANGELOG.md", "pyproject.toml",
-              os.path.join("tools", "build_data_v7.py"), os.path.join("tools", "build_data_v8.py"),
-              os.path.join("tools", "category_labels.py"), os.path.join("tools", "category_head_data.py"),
-              os.path.join("tools", "train_category_head.py"), os.path.join("tools", "bench_category_head.py"),
-              os.path.join("tools", "bench_category_head_realcheck.py"), os.path.join("tools", "make_category_labels_notebook.py"),
-              os.path.join("tools", "make_multitask_notebook.py"), os.path.join("tools", "negatives_v8.py"))
+# 配布物として読まれる文書も対象にする
+SCAN_FILES = ("README.md", "CHANGELOG.md", "pyproject.toml")
 # 同梱の禁止リストはハッシュ列の .pmk（平文を持たない）。拡張子の絞り込みで既に対象外だが明示しておく
 EXCLUDED = (os.path.join(ROOT, "privacy_masker", "data", "surrogate_denylist.pmk"), os.path.abspath(__file__))
 

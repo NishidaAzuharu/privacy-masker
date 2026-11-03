@@ -2,8 +2,8 @@
 
 NER encoder のスパンベクトル（`char_head.encode_span_vectors` / `Entity.vector`）から
 ORG / FACILITY / LOCATION のカテゴリを決める、型ごとの線形層 + softmax の学習済みヘッド。
-学習は `tools/train_category_head.py`（本モジュールの定数・`encoder_sha256`・`_linear_softmax`
-を import して使う。重複を残さないため実装はここに一本化する）。
+学習側は本モジュールの定数・`encoder_sha256`・`_linear_softmax` を import して使う
+（重複を残さないため実装はここに一本化する）。
 
 読み込み・純 Python 推論は `HeadCategorizer` が行う。安全な遅延 import のため、このモジュールは
 トップレベルで safetensors / numpy / torch を import しない（base パッケージが `[transformers]`
@@ -71,7 +71,7 @@ def _decode_vector(data: bytes) -> tuple[float, ...]:
 
 
 def _linear_softmax(W: Sequence[Sequence[float]], b: Sequence[float], x: Sequence[float]) -> list[float]:
-    """`nn.Linear` 1 層 + softmax を純 Python で計算する（学習側 `train_category_head.py` と共有）。"""
+    """`nn.Linear` 1 層 + softmax を純 Python で計算する（学習側と共有）。"""
     logits = [sum(wi * xi for wi, xi in zip(row, x)) + bi for row, bi in zip(W, b)]
     m = max(logits)
     exps = [math.exp(v - m) for v in logits]
@@ -87,7 +87,7 @@ def _gelu_tanh(x):
 
 
 def _mlp_softmax(W1, b1, W2, b2, x) -> list[float]:
-    """入力 → Linear → GELU(tanh) → Linear → softmax を numpy で計算する（学習側 `train_category_head.py` と共有）。"""
+    """入力 → Linear → GELU(tanh) → Linear → softmax を numpy で計算する（学習側と共有）。"""
     import numpy as np
 
     h = _gelu_tanh(W1 @ np.asarray(x, dtype=np.float32) + b1)

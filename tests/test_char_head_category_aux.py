@@ -136,20 +136,6 @@ def test_category_loss_skips_spans_without_subwords():
     assert n == 1
 
 
-def test_sqrt_class_weights_matches_training_tool():
-    import os, sys
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
-    pytest.importorskip("numpy"); pytest.importorskip("safetensors.numpy")
-    import train_category_head as tch
-    y = ["a"] * 100 + ["b"] * 1 + ["c"] * 4
-    counts = {"a": 100, "b": 1, "c": 4}
-    assert ch.sqrt_class_weights(counts, ["a", "b", "c", "d"]) == pytest.approx(tch._class_weights(y, ["a", "b", "c", "d"], mode="sqrt", cap=5.0))
-    big = {f"c{i}": 10000 for i in range(8)}; big["c0"] = 1            # 1 クラスだけ稀 → 8/1.07 ≒ 7.5 が上限 5 で切られる
-    cats8 = [f"c{i}" for i in range(8)]
-    assert max(ch.sqrt_class_weights(big, cats8)) == pytest.approx(5.0)
-    y8 = [c for c in cats8 for _ in range(big[c])]
-    assert ch.sqrt_class_weights(big, cats8) == pytest.approx(tch._class_weights(y8, cats8, mode="sqrt", cap=5.0))
-
 
 def test_category_spans_by_text_joins_and_counts():
     labels = [
