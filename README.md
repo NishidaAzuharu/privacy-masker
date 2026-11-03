@@ -249,6 +249,9 @@ NER が所要時間のほぼ全てを占めます（Apple Silicon、平均 337 �
 - `CharHeadNerDetector` の `device` の既定は `cpu` です。Apple Silicon なら `device="mps"`、NVIDIA なら `"cuda"` を明示してください。`TransformersNerDetector` は `device` を省くと transformers が CUDA → MPS → CPU の順で自動選択します。精度型の既定は float32 で、MPS と CPU では bf16 / fp16 は速くなりません。
 - 形態素解析が必要なら `[mecab]`（fugashi）を推奨します。Janome は純 Python で約 5 ms/doc 余計にかかります。
 - detector 側の `batch_size` は CPU で 8〜16、GPU で 32 以上が目安です。
+- `CharHeadNerDetector(device="cuda", dtype="float16")` で forward を半精度にできます（重みとヘッドの softmax は fp32 のまま）。`dtype` の既定は `None`（fp32）です。MPS / CPU では半精度にしても速くなりません。
+
+Colab の T4 で測るノートブック: [examples/colab_t4_benchmark.ipynb](examples/colab_t4_benchmark.ipynb)
 
 ## 注意（脅威モデル）
 

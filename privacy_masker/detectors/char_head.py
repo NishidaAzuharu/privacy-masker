@@ -10,7 +10,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
+
+if TYPE_CHECKING:
+    import torch
 
 from ..exceptions import ConfigurationError
 from ..types import Entity
@@ -29,6 +32,10 @@ class CharHeadNerDetector:
     安易に上げないこと。``merge_strategy`` / ``merge_adjacent`` は
     ``char_head.predict_char_spans`` にそのまま渡す。
 
+    ``dtype`` は推論時の autocast 用。既定 ``None`` は fp32、``"float16"`` / ``"bfloat16"``
+    （または対応する ``torch.dtype``）を指定できる。重みは変換せず、ヘッドの softmax は fp32。
+    CUDA / MPS / CPU のうち、その環境の torch が指定型の autocast に対応している場合だけ使える。
+
     数値異常（NaN/Inf logits）や未被覆文字は ``char_head`` 側が例外にする。ここでは
     **握りつぶさない**。空結果を正常返却すると PII が丸ごと落ちるため、例外はそのまま
     呼び出し側へ上げる（``Engine`` の ``on_detector_error`` で方針を決められる）。
@@ -44,6 +51,7 @@ class CharHeadNerDetector:
         tokenizer: Any = None,
         *,
         device: Any = "cpu",
+        dtype: str | torch.dtype | None = None,
         batch_size: int = 16,
         chunk_chars: int | None = None,
         chunk_overlap: int | None = None,
@@ -74,6 +82,7 @@ class CharHeadNerDetector:
             raise ConfigurationError(f"unknown category_head: {category_head!r} (use True, False or 'auto')")
 
         self._ch = ch
+        self.dtype = self._resolve_dtype(dtype, device)
         if isinstance(model, (str, bytes)) or hasattr(model, "__fspath__"):
             from ..hub import resolve_model_dir
 
@@ -114,6 +123,38 @@ class CharHeadNerDetector:
         self.span_vectors = bool(span_vectors)
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _resolve_dtype(dtype: str | torch.dtype | None, device: Any) -> torch.dtype | None:
+        """重みを読む前に型と autocast の対応を検査する。無効化されて fp32 に戻る場合も弾く。"""
+        import warnings
+
+        import torch
+
+        if dtype is None:
+            return None
+        choices = {"float16": torch.float16, "bfloat16": torch.bfloat16}
+        if isinstance(dtype, str):
+            dtype = choices.get(dtype)
+        if not isinstance(dtype, torch.dtype) or dtype not in choices.values():
+            raise ConfigurationError("dtype は None（fp32）、'float16'、'bfloat16' または対応する torch.dtype にしてください")
+        combinations = (
+            "利用できる組み合わせ: dtype=None（fp32）、CUDA + float16 / bfloat16、"
+            "MPS / CPU + float16 / bfloat16（指定型の autocast に対応する torch・デバイスが必要）"
+        )
+        try:
+            device_type = torch.device(device).type
+            if device_type not in ("cuda", "mps", "cpu"):
+                raise ValueError(f"autocast の対象外の device: {device_type}")
+            # 古い torch では非対応の型を警告だけで無効化することがある。
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", UserWarning)
+                with torch.autocast(device_type=device_type, dtype=dtype):
+                    if not torch.is_autocast_enabled(device_type):
+                        raise ValueError("autocast が無効になっています")
+        except (RuntimeError, ValueError, TypeError, UserWarning) as e:
+            raise ConfigurationError(f"device={device!r}, dtype={dtype} は使えません。{combinations}: {e}") from e
+        return dtype
+
     @staticmethod
     def _load_category_head(path: str, category_head: bool | str):
         """``path`` から分類ヘッド（計画 B、``HeadCategorizer``）を読み込む。
@@ -184,6 +225,7 @@ class CharHeadNerDetector:
             self.model,
             self.tokenizer,
             device=self.device,
+            autocast_dtype=self.dtype,
             batch_size=self.batch_size,
             chunk_chars=self.chunk_chars,
             chunk_overlap=self.chunk_overlap,

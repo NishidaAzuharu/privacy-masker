@@ -433,7 +433,12 @@ def token_safe_chunks(
         # 重なりは幅の半分までに制限する。制限しないと次の開始位置が前へ進まない。
         start = end - min(chunk_overlap, take // 2)
 
-    # fail-closed: 全文字被覆と階段状を確認する。破れていれば core 割り当てが成立しない。
+    _check_chunk_spans(spans, n)
+    return [(a, text[a:b]) for a, b in spans]
+
+
+def _check_chunk_spans(spans: Sequence[tuple[int, int]], n: int) -> None:
+    """fail-closed: 全文字被覆と階段状を確認する（core 割り当ての前提）。"""
     broken = spans[0][0] != 0 or spans[-1][1] != n
     for (pa, pb), (ca, cb) in zip(spans, spans[1:]):
         if not (pa < ca <= pb < cb):
@@ -444,7 +449,6 @@ def token_safe_chunks(
             f"分割結果が [0,{n}) を隙間なく階段状に覆えていません: {spans}。"
             " chunk_chars / chunk_overlap / max_length の組み合わせを見直してください。"
         )
-    return [(a, text[a:b]) for a, b in spans]
 
 
 def core_ranges(chunks: Sequence[tuple[int, str]], n_chars: int) -> list[tuple[int, int]]:
@@ -536,6 +540,25 @@ def encode_chunk(
         truncation=True,
         max_length=max_length,
     )
+    return _encode_chunk_from_encoding(
+        text, enc, tokenizer, max_length, piece_cache, entities=entities, strict=strict,
+        strict_labels=strict_labels, category_spans=category_spans,
+    )
+
+
+def _encode_chunk_from_encoding(
+    text: str,
+    enc: Mapping[str, Any],
+    tokenizer,
+    max_length: int,
+    piece_cache: dict[str, int] | None,
+    *,
+    entities: Iterable[Any] | None = None,
+    strict: bool = True,
+    strict_labels: bool = False,
+    category_spans: Iterable[tuple[int, int, int, int]] | None = None,
+) -> dict[str, Any]:
+    """符号化済みの窓から文字特徴量を作る。まとめ処理では上限内と実測した結果だけを渡す。"""
     input_ids = list(enc["input_ids"])
     attention_mask = list(enc["attention_mask"])
     offsets = list(enc["offset_mapping"])
@@ -1310,6 +1333,19 @@ def vector_to_floats(data: bytes) -> tuple[float, ...]:
     return struct.unpack(f"<{n}e", data[: n * 2])
 
 
+def _batch_chunk_encodings(texts: list[str], tokenizer) -> list[dict[str, Any]]:
+    """次の窓をまとめて符号化する。単一文字列用 tokenizer の平坦な戻り値にも対応する。"""
+    kwargs = dict(add_special_tokens=True, truncation=False, return_offsets_mapping=True)
+    batch = tokenizer(texts, **kwargs)
+    if batch["input_ids"] and isinstance(batch["input_ids"][0], int):
+        # 自前 tokenizer には list を文字列と同様に走査するものもある。各窓を個別に符号化する。
+        return [tokenizer(text, **kwargs) for text in texts]
+    return [
+        {key: batch[key][i] for key in ("input_ids", "attention_mask", "offset_mapping")}
+        for i in range(len(texts))
+    ]
+
+
 def _chunk_and_encode(
     texts: Sequence[str],
     tokenizer,
@@ -1323,20 +1359,73 @@ def _chunk_and_encode(
     list[list[tuple[int, int]]],
 ]:
     """全文書をチャンクに割って符号化し、``(feats, doc_chunks, doc_feats, cores)`` を返す
-    （``predict_char_spans`` と ``encode_span_vectors`` で共有）。"""
+    （``predict_char_spans`` と ``encode_span_vectors`` で共有）。
+
+    各文書の次の窓をラウンドごとにまとめて符号化する。上限内ならその結果を再利用し、
+    超えた窓だけ従来の二分探索に戻す。特徴量への変換は最後に文書順で行う。
+    """
+    if texts:
+        if chunk_overlap >= chunk_chars:
+            raise ValueError("chunk_overlap must be smaller than chunk_chars")
+        if chunk_overlap < 0:
+            raise ValueError("chunk_overlap must not be negative")
+
+    doc_spans: list[list[tuple[int, int]]] = [[] for _ in texts]
+    doc_encodings: list[list[dict[str, Any]]] = [[] for _ in texts]
+    starts = [0] * len(texts)
+    pending = [di for di, text in enumerate(texts) if text]
+    while pending:
+        windows = [texts[di][starts[di] : starts[di] + chunk_chars] for di in pending]
+        encodings = _batch_chunk_encodings(windows, tokenizer)
+        next_pending = []
+        for di, window, enc in zip(pending, windows, encodings):
+            text, start = texts[di], starts[di]
+            spans = doc_spans[di]
+            take = len(window)
+            if len(enc["input_ids"]) > max_length:
+                take = _fit_chunk_chars(text, tokenizer, start, take, max_length)
+                if take == 0:
+                    one = _token_len(text[start : start + 1], tokenizer)
+                    raise CharCoverageError(
+                        f"text[{start}:{start + 1}]={text[start]!r} の 1 文字が {one} token に膨張し、"
+                        f"max_length={max_length} をどう分割しても満たせません。"
+                        " max_length を増やすか、この文字を正規化・除去してから渡してください。"
+                    )
+            end = start + take
+            if spans and end <= spans[-1][1]:
+                # token 密度の高い箇所では重なりを捨て、直前の終端からやり直す。
+                starts[di] = spans[-1][1]
+                next_pending.append(di)
+                continue
+            if take != len(window):
+                enc = tokenizer(
+                    text[start:end], add_special_tokens=True, truncation=True,
+                    max_length=max_length, return_offsets_mapping=True,
+                )
+            spans.append((start, end))
+            doc_encodings[di].append(enc)
+            if end < len(text):
+                starts[di] = end - min(chunk_overlap, take // 2)
+                next_pending.append(di)
+        pending = next_pending
+
     piece_cache: dict[str, int] = {}
     feats: list[dict[str, Any]] = []
     doc_chunks: list[list[tuple[int, str]]] = []
     doc_feats: list[list[int]] = []
     cores: list[list[tuple[int, int]]] = []
     for di, text in enumerate(texts):
-        chunks = token_safe_chunks(text, tokenizer, chunk_chars, chunk_overlap, max_length)
+        spans = doc_spans[di]
+        if text:
+            _check_chunk_spans(spans, len(text))
+        chunks = [(a, text[a:b]) for a, b in spans]
         doc_chunks.append(chunks)
         cores.append(core_ranges(chunks, len(text)))
         doc_feats.append([])
-        for off, piece in chunks:
+        for (_, piece), enc in zip(chunks, doc_encodings[di]):
             doc_feats[di].append(len(feats))
-            feats.append(encode_chunk(piece, tokenizer, None, max_length, piece_cache, strict=True))
+            feats.append(_encode_chunk_from_encoding(piece, enc, tokenizer, max_length, piece_cache))
+        doc_encodings[di].clear()
     return feats, doc_chunks, doc_feats, cores
 
 
@@ -1413,6 +1502,7 @@ def predict_char_spans(
     warn_fallback: bool = False,
     vectors_out: list[list[bytes | None]] | None = None,
     vector_features: str = "span_mean",
+    autocast_dtype: torch.dtype | None = None,
 ) -> list[list[CharSpan]]:
     """文書ごとに文字スパンを返す。確率平均はしない。
 
@@ -1448,6 +1538,9 @@ def predict_char_spans(
     ``token_hidden`` を返す場合）をスパンに重なるサブワードで平均し L2 正規化した float16 LE の
     バイト列を追加する（``span_vector``）。モデルが ``token_hidden`` を返さなければ ``None``。
     ``vector_features`` で特徴量を選ぶ（既定 ``span_mean``、``FEATURES`` 参照）。
+
+    ``autocast_dtype`` は forward にだけ適用する（既定 ``None`` は fp32）。重みの型は変えず、
+    ヘッド出力の softmax は常に fp32 で計算する。
     """
     if merge_strategy not in MERGE_STRATEGIES:
         raise ValueError(f"merge_strategy は {MERGE_STRATEGIES} のいずれか: {merge_strategy!r}")
@@ -1470,7 +1563,9 @@ def predict_char_spans(
         idxs = order[s : s + batch_size]
         batch = collate([feats[i] for i in idxs])
         batch = {k: v.to(device) for k, v in batch.items()}
-        result = model(**batch)
+        with torch.autocast(device_type=torch.device(device).type, dtype=autocast_dtype,
+                            enabled=autocast_dtype is not None):
+            result = model(**batch)
         logits = result["logits"]
         hidden_cpu: torch.Tensor | None = None
         if vectors_out is not None and isinstance(result, dict) and result.get("token_hidden") is not None:
@@ -1481,6 +1576,7 @@ def predict_char_spans(
         if bool(valid.any()) and not bool(torch.isfinite(logits[valid]).all()):
             raise FloatingPointError(
                 "文字NERの有効文字位置に NaN または Inf があります（モデル出力の数値異常）"
+                + ("。dtype を bfloat16 か None（fp32）にして再実行してください" if autocast_dtype is not None else "")
             )
         probs = torch.softmax(logits.float(), dim=-1)
         # 文字ごとに argmax を呼ぶのではなく batch 単位でまとめて取る
