@@ -18,6 +18,7 @@ from ..data.ja_pools import (
     GIVEN_HIRA, GIVEN_KANJI, GIVEN_KANJI_F, GIVEN_KANJI_M, GIVEN_KATA, GIVEN_KATA_JA, GIVEN_ROMAJI, KATA_CORES,
     NATURE_WORDS, NICKNAMES_KATA, ORG_ASSOCIATION_WORDS, ORG_CORES, ORG_DIRECTIONS, ORG_GOV_WORDS, ORG_INDUSTRIES,
     ORG_INDUSTRY_WORDS, ORG_KATA_PARTS, ORG_MEDIA_WORDS, ORG_PARTY_WORDS, PREFECTURES, PREF_CITIES, PREF_CITIES_EXTRA,
+    ORG_SERVICE_CORES, ORG_SERVICE_KATA_CORES, ORG_SERVICE_SUFFIXES, ORG_TYPE_WORDS, ORG_TYPE_DEFAULTS,
     REGION_BLOCKS, SCHOOL_PREFIXES, SURNAMES_HIRA, SURNAMES_KANJI, SURNAMES_KATA, SURNAMES_KATA_JA, SURNAMES_ROMAJI, TOWNS,
 )
 from .semantic import Features, LEGAL_FORMS, given_gender, to_halfwidth_kana
@@ -46,9 +47,10 @@ def _chome(f: Features, rng: random.Random) -> str:
 _LEGAL_FORMS_DIRECTIONAL = tuple(f for f in LEGAL_FORMS if f not in ("(株)", "（株）"))
 
 
-def _yield_org_forms(body: str) -> Iterator[str]:
+def _yield_org_forms(body: str, *, include_bare: bool = True) -> Iterator[str]:
     """法人格なし・(株)/（株）・その他の法人格の前置/後置のすべてを列挙する（enumerate_candidates 用の共通処理）。"""
-    yield body
+    if include_bare:
+        yield body
     yield "（株）" + body
     for form in _LEGAL_FORMS_DIRECTIONAL:
         yield form + body
@@ -110,8 +112,18 @@ def _with_legal_form(core: str, f: Features) -> str:
     return core + f.legal_form if f.legal_form_pos == "post" else f.legal_form + core
 
 
-def gen_org(f: Features, rng: random.Random) -> str:
+def gen_org(f: Features, rng: random.Random, *, neutral_service: bool = True) -> str:
+    """業種不明だけ中立化する。既知カテゴリからの退避は neutral_service=False で旧出力を保つ。"""
     cat = f.category
+    if cat == "service" and neutral_service and f.script != "latin_abbr":
+        cores = ORG_SERVICE_KATA_CORES if f.script == "kata" else ORG_SERVICE_CORES
+        core = rng.choice(cores)
+        suffix = rng.choice(ORG_SERVICE_SUFFIXES if f.legal_form is not None else ORG_SERVICE_SUFFIXES[1:])
+        return _with_legal_form(core + suffix, f)
+    if cat in ORG_TYPE_WORDS:
+        # 固有の地名は使わず、中立な組み合わせ式造語を使う。
+        core = rng.choice(ORG_SERVICE_KATA_CORES if f.script == "kata" else ORG_SERVICE_CORES)
+        return core + (f.type_word or rng.choice(ORG_TYPE_DEFAULTS[cat]))
     if cat == "department":
         return rng.choice(DEPT_FUNCTIONS) + rng.choice(DEPT_UNITS)
     if cat == "medical_corp":
@@ -119,10 +131,6 @@ def gen_org(f: Features, rng: random.Random) -> str:
         return form + rng.choice(ORG_CORES) + "会"
     if cat == "school_corp":
         return "学校法人" + rng.choice(ORG_CORES) + "学園"
-    if cat == "government":
-        return rng.choice(ORG_CORES) + rng.choice(ORG_GOV_WORDS)
-    if cat == "association":
-        return rng.choice(ORG_CORES) + rng.choice(ORG_ASSOCIATION_WORDS)
     if cat == "media":
         return rng.choice(ORG_CORES) + rng.choice(ORG_MEDIA_WORDS)
     if cat == "party":
@@ -246,6 +254,12 @@ def enumerate_candidates() -> Iterator[str]:
     for g, s in product(GIVEN_ROMAJI, SURNAMES_ROMAJI):
         yield g + " " + s
     # ORG
+    for core, suffix in product(ORG_SERVICE_CORES + ORG_SERVICE_KATA_CORES, ORG_SERVICE_SUFFIXES):
+        yield from _yield_org_forms(core + suffix, include_bare=bool(suffix))
+    for core, word in product(ORG_SERVICE_CORES + ORG_SERVICE_KATA_CORES,
+                              sorted({w for words in ORG_TYPE_WORDS.values() for w in words})):
+        yield core + word
+    # 既知カテゴリからの退避に使う従来の service 候補も引き続きすべて列挙する。
     words_all = sorted(set(ORG_INDUSTRIES) | {w for ws in ORG_INDUSTRY_WORDS.values() for w in ws})
     for core in ORG_CORES:
         for w in words_all:

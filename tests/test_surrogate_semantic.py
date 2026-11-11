@@ -76,8 +76,8 @@ def test_rule_quirks_v2_org_round1_fixes(name, expected):
     # fix round 1 で自治体接頭パターンの文字クラスに 省|州 を足したが、fix round 2 のレビューで
     # 「社内省エネ推進委員会」等の誤発火と地名語幹の漏洩が見つかり撤回した（代替なし）。
     # 四川省発展委員会・ハルカゼ州選挙委員会 は department に戻る（下の test_rule_quirks_v2_org_round3_fixes 参照）
-    # 協議会・評議会は従来どおり government（「議会」が government の語彙に既にあるための副作用。今回は変えない）
-    ("青葉協議会", "government"),
+    # 協議会は追加の団体規則を「議会」より先に照合する。
+    ("青葉協議会", "association"),
 ])
 def test_rule_quirks_v2_org_round2_fixes(name, expected):
     assert sm.RuleCategorizer.categorize("org", name) == expected
@@ -283,7 +283,7 @@ def test_avoid_parts_avoids_fake_core_vocabulary_words_embedded_in_the_extracted
     その内部に生成器の固有部分の語彙（ORG_CORES・KATA_CORES は org/facility、TOWNS は location の
     district/nature）が部分文字列として埋もれていても個別には避けられなかった。avoid_parts が
     元の値に含まれる語彙語をすべて追加で avoid するようになったことを確認する。"""
-    assert set(sm.avoid_parts("org", norm("中央青葉人事委員会"))) >= {"中央青葉", "中央", "青葉"}
+    assert set(sm.avoid_parts("org", norm("中央青葉人事委員会"))) >= {"中央青葉人事", "中央", "青葉"}
     assert "若葉" in sm.avoid_parts("org", norm("若葉県教育委員会"))
     assert "汐見" in sm.avoid_parts("org", norm("汐見町議会"))
     assert set(sm.avoid_parts("facility", norm("北斗青葉記念館"))) >= {"北斗", "青葉"}
@@ -546,7 +546,11 @@ def test_avoid_parts_org_facility_equals_the_old_loop():
         for kind in ("org", "facility"):
             old = _old_avoid_parts_org_facility(kind, n)
             got = sm.avoid_parts(kind, n)
-            assert got[:len(old)] == old, (kind, value, got, old)
+            if kind == "org" and sm.RuleCategorizer.categorize(kind, sm.split_legal_form(n)[2]) in jp.ORG_TYPE_WORDS:
+                # 保存対象は最長種別語の前がコア。短く切る場合も旧コアを含む候補を拒否できる。
+                assert all(any(p in previous for p in got) for previous in old), (kind, value, got, old)
+            else:
+                assert got[:len(old)] == old, (kind, value, got, old)
             for part in got:
                 assert part in n.replace(" ", ""), (kind, value, part)
 
@@ -631,8 +635,8 @@ def test_core_split_cuts_committee_names_matched_from_the_start():
     assert got[0] == "若葉県教育" and "若葉" in got[1:]
     assert sm.RuleCategorizer.core_split("org", "営業委員会") == 2
     assert sm.RuleCategorizer.core_split("org", "朝霧市教育委員会") == 5
-    # 開始位置 2 以上で表の行に当たる委員会は従来どおりその行で切る（「教育委員会」の 2）
-    assert sm.RuleCategorizer.core_split("org", "青葉教育委員会") == 2
+    # 保存する閉じた種別語「委員会」の前で切る。
+    assert sm.RuleCategorizer.core_split("org", "青葉教育委員会") == 4
     # カテゴリ・種別語のスパンは変わらない（委員会 は core_split 専用）
     assert sm.RuleCategorizer.categorize("org", "営業委員会") == "department"
     assert sm.RuleCategorizer.categorize("org", "朝霧市教育委員会") == "government"

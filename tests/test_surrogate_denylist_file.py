@@ -49,3 +49,50 @@ def test_manifest_path_uses_splitext_and_trailing_newline():
     assert manifest_path_for("/x/a.pmk.pmk") == "/x/a.pmk.manifest.json"
     raw = open(os.path.join(DATA, "surrogate_denylist.manifest.json"), "rb").read()
     assert raw.endswith(b"\n")
+
+
+def test_service_core_audit_requires_constant_exclusions():
+    import pytest
+    from privacy_masker.data import ja_pools as jp
+    from tools.build_surrogate_denylist import audit_service_cores
+
+    excluded = jp.ORG_SERVICE_CORE_EXCLUSIONS | jp.ORG_SERVICE_KATA_CORE_EXCLUSIONS
+    report = audit_service_cores(PublicKnowledge.from_iterable(excluded))
+    for script, pool in (("kanji", jp.ORG_SERVICE_CORES), ("kata", jp.ORG_SERVICE_KATA_CORES)):
+        assert report[script]["remaining_hits"] == 0
+        assert report[script]["cores"] == len(pool) >= 200
+        assert report[script]["wikipedia_hits"] == report[script]["excluded"]
+        with pytest.raises(ValueError, match=f"service/{script}: 1 core collisions"):
+            audit_service_cores(PublicKnowledge.from_iterable([pool[0]]))
+
+
+def test_manifest_service_core_counts_match_pools():
+    from privacy_masker.data import ja_pools as jp
+
+    m = json.load(open(os.path.join(DATA, "surrogate_denylist.manifest.json"), encoding="utf-8"))
+    for script, pool in (("kanji", jp.ORG_SERVICE_CORES), ("kata", jp.ORG_SERVICE_KATA_CORES)):
+        audit = m["service_cores"][script]
+        assert audit["raw_candidates"] - audit["excluded"] == audit["cores"] == len(pool)
+        assert audit["remaining_hits"] == 0
+
+
+def test_manifest_type_spaces_match_candidates():
+    from privacy_masker.data import ja_pools as jp
+    m = json.load(open(os.path.join(DATA, 'surrogate_denylist.manifest.json'), encoding='utf-8'))
+    assert set(m['org_types']) == set(jp.ORG_TYPE_WORDS)
+    for category, words in jp.ORG_TYPE_WORDS.items():
+        assert set(m['org_types'][category]) == set(words)
+        for word in words:
+            for script, pool in [('kanji', jp.ORG_SERVICE_CORES), ('kata', jp.ORG_SERVICE_KATA_CORES)]:
+                counts = m['org_types'][category][word][script]
+                assert counts['candidates'] == len(pool)
+                assert counts['available'] == counts['candidates'] - counts['hits'] >= 100
+
+
+def test_type_audit_rejects_dense_collisions():
+    import pytest
+    from privacy_masker.data import ja_pools as jp
+    from tools.build_surrogate_denylist import audit_org_types
+    denied = [core + '大学' for core in jp.ORG_SERVICE_CORES[:30]]
+    with pytest.raises(ValueError, match='too many collisions'):
+        audit_org_types(PublicKnowledge.from_iterable(denied))

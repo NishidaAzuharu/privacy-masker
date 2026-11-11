@@ -28,6 +28,7 @@ from ..annotators.knowledge import PublicKnowledge
 from ..data.ja_pools import (
     BUILDING_A, BUILDING_B, GIVEN_KANJI, GIVEN_KANJI_F, GIVEN_KANJI_M, GIVEN_KATA, GIVEN_KATA_JA, ORG_CORES, ORG_DIRECTIONS,
     ORG_INDUSTRIES, ORG_KATA_PARTS, ORG_KNOWN_SUFFIXES, PREF_CITIES, SURNAMES_KANJI, SURNAMES_KATA, SURNAMES_KATA_JA, TOWNS,
+    ORG_SERVICE_CORES, ORG_SERVICE_KATA_CORES,
 )
 from ..exceptions import ConfigurationError, StoreError
 from ..normalize import default_normalize
@@ -39,7 +40,7 @@ from .semantic import (
     extract_features, gender_hint, is_municipality, split_person,
 )
 from .surrogate_filter import SurrogateFilter
-from .surrogate_generators import generate
+from .surrogate_generators import generate, gen_org
 
 _KINDS = ("person", "org", "facility", "location", "address", "auto")
 _LEGACY_KINDS = ("person", "org", "address")
@@ -331,16 +332,24 @@ class Surrogate:
         category = self._resolver.resolve(kind, norm, entity.vector)
         feats = extract_features(kind, value, norm, category, keep=self.keep if kind == "address" else None)
         avoid = avoid_parts(kind, norm)
+        if kind == "org" and category in ("service", "education", "government", "association"):
+            # 新コアが原文の固有部分に埋もれていても再利用しない。
+            # 分類ヘッドだけでカテゴリが決まった場合も含める。
+            avoid += tuple(w for w in ORG_SERVICE_CORES + ORG_SERVICE_KATA_CORES if w in norm)
         # カテゴリ別 → 型レベルに退避。既に型レベル（OTHER）なら 2 周目は 1 周目と同じ特徴の引き直しにすぎないので
         # 1 周にまとめるが、試行回数は 2 周分を保つ（同じ特徴・同じ rng から同じ順に引くので、hmac で従来 11〜20 回目に
         # 通っていた値もそのまま通る。1 周 10 回に減らすとそれらがトークンに落ちる。最終レビュー M2）
-        if feats.category == OTHER[kind]:
+        if feats.category == OTHER[kind] or (kind == "org" and category in ("education", "government", "association")):
+            # 種別保存対象は同じ特徴で20回試し、尽きたらトークンへ。企業名には退避しない。
             rounds = ((feats, 2 * _DRAW_RETRIES),)
         else:
             rounds = ((feats, _DRAW_RETRIES), (dataclasses.replace(feats, category=OTHER[kind]), _DRAW_RETRIES))
         for f, budget in rounds:
             for _ in range(budget):
-                candidate = generate(f, rng)
+                if kind == "org" and category != "service" and f.category == "service":
+                    candidate = gen_org(f, rng, neutral_service=False)
+                else:
+                    candidate = generate(f, rng)
                 if candidate and self._restorable(candidate) and self._filter.reject_reason(
                     candidate, original_norm=norm, avoid_parts=avoid, text=text,
                     check_public=_public_check_applies(kind, f.structure),

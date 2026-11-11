@@ -3,7 +3,7 @@
 
 順に判定し、最初に当たった理由を返す。採用なら None。
 - same_as_original: 正規化後に元と同一
-- contains_original_part: 元の姓・名・コア語（2 字以上）を含む
+- contains_original_part: 元の姓・名・コア語を含む（通常2字以上、種別保存ORGのコアは1字も対象）
 - public_entity: 同梱の禁止リスト（生成器の候補全体 × Wikipedia 見出し語の衝突分）か、実行時に渡された PublicKnowledge にある
 - present_in_document: 元の文書本文に既に出現している（検出漏れの実名や別の実体との同一化を防ぐ）
 - denylist: 利用者の禁止語
@@ -119,7 +119,7 @@ class SurrogateFilter:
         for part in avoid_parts:
             # avoid_parts はローマ字を n の表記のまま返す（大小文字を保つ）。default_normalize は
             # 小文字化しないため、候補側の大小文字が n と揃うとは限らない。日本語は lower() で不変
-            if len(part) >= 2 and part.lower() in c.lower():
+            if part and part.lower() in c.lower():
                 return "contains_original_part"
         if check_public:
             if candidate in self._packaged or c in self._packaged:

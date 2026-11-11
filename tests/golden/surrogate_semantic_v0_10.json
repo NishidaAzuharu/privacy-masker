@@ -50,7 +50,7 @@
     {
       "kind": "org",
       "value": "株式会社大和技研",
-      "expected": "株式会社若草薬品"
+      "expected": "株式会社霞宵インターナショナル"
     },
     {
       "kind": "org",
@@ -140,22 +140,22 @@
     {
       "kind": "org",
       "value": "みなと商事",
-      "expected": "曙金属"
+      "expected": "空彩カンパニー"
     },
     {
       "kind": "org",
       "value": "若草の会",
-      "expected": "曙協会"
+      "expected": "森碧の会"
     },
     {
       "kind": "org",
       "value": "青葉開発機構",
-      "expected": "北斗機構"
+      "expected": "虹暁機構"
     },
     {
       "kind": "org",
       "value": "汐見航空局",
-      "expected": "東雲公社"
+      "expected": "霞澄局"
     },
     {
       "kind": "org",
@@ -170,7 +170,7 @@
     {
       "kind": "org",
       "value": "若葉県教育委員会",
-      "expected": "新星機構"
+      "expected": "月碧委員会"
     },
     {
       "kind": "org",
@@ -201,6 +201,46 @@
       "kind": "location",
       "value": "上海",
       "expected": "バンクーバー"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄大学",
+      "expected": "霞宵大学"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄大学院大学",
+      "expected": "露澄大学院大学"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄高等学校",
+      "expected": "花暁高等学校"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄議院",
+      "expected": "宙凪議院"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄県警",
+      "expected": "朝宵県警"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄会計検査院",
+      "expected": "波宵検査院"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄連合",
+      "expected": "宙碧連合"
+    },
+    {
+      "kind": "org",
+      "value": "ソラミネ",
+      "expected": "ナツアケホールディングス"
     }
   ]
 }

@@ -20,7 +20,7 @@ def F(kind, category, **kw):
 @pytest.mark.parametrize("cat, words", [
     ("manufacturing", jp.ORG_INDUSTRY_WORDS["manufacturing"]), ("finance", jp.ORG_INDUSTRY_WORDS["finance"]),
     ("association", jp.ORG_ASSOCIATION_WORDS), ("media", jp.ORG_MEDIA_WORDS), ("party", jp.ORG_PARTY_WORDS),
-    ("government", jp.ORG_GOV_WORDS), ("service", jp.ORG_INDUSTRIES),
+    ("government", jp.ORG_TYPE_DEFAULTS["government"]), ("education", jp.ORG_TYPE_DEFAULTS["education"]),
 ])
 def test_org_output_ends_with_category_word(cat, words):
     for seed in range(20):

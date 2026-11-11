@@ -14,12 +14,13 @@ from typing import Callable, Mapping
 from ..data.ja_pools import (
     COUNTRIES, COUNTRIES_EXTRA, COUNTRY_ALIASES, COUNTRY_CANONICAL, DEPT_FUNCTIONS, FOREIGN_CITIES_KANJI, FOREIGN_CITIES_KATA,
     GIVEN_HIRA, GIVEN_KANJI_F, GIVEN_KANJI_M, GIVEN_KATA, GIVEN_KATA_JA, GIVEN_ROMAJI, KATA_CORES, ORG_CORES,
+    ORG_TYPE_WORDS, ORG_SERVICE_CORES, ORG_SERVICE_KATA_CORES,
     PREFECTURES, PREF_CITIES, PREF_CITIES_EXTRA, REGION_BLOCKS, SURNAMES_HIRA, SURNAMES_KANJI, SURNAMES_KATA_JA,
     SURNAMES_ROMAJI, TOWNS,
 )
 
 ORG_CATEGORIES = ("manufacturing", "it", "finance", "retail", "construction", "transport", "service",
-                  "medical_corp", "school_corp", "government", "association", "media", "party", "department")
+                  "medical_corp", "school_corp", "government", "association", "media", "party", "department", "education")
 FACILITY_CATEGORIES = ("medical", "education", "transport", "commerce", "public", "building", "culture", "other")
 LOCATION_CATEGORIES = ("country", "prefecture", "city", "town", "district", "foreign", "nature", "other")
 CATEGORIES: dict[str, tuple[str, ...]] = {
@@ -120,6 +121,11 @@ class Features:
     chome_style: bool = False
     chome_kanji: bool = False              # 丁目が漢数字（一丁目）か
     fullwidth_digits: bool = False
+    type_word: str | None = None           # ORG_TYPE_WORDS[category] のいずれか（末尾の種別だけ）
+
+    def __post_init__(self) -> None:
+        if self.type_word is not None and (self.kind != "org" or self.type_word not in ORG_TYPE_WORDS.get(self.category, ())):
+            raise ValueError("type_word must belong to the category's closed vocabulary")
 
 
 def _script_of(norm: str, raw: str) -> str:
@@ -264,9 +270,21 @@ def split_person(norm: str) -> tuple[str, str] | None:
 class RuleCategorizer:
     """種別語・法人格・粒度による決定的なカテゴリ判定。決まらなければ OTHER[kind]。"""
 
+    # 追加規則は法人格付きには適用しない。既存の法人格・業種判定を優先する。
+    # 協議会は既存の「議会」より先に見る。政治協会・政治連盟とは重ならない。
+    _ORG_ADDITIONS = (
+        ("education", re.compile("(" + "|".join(sorted(ORG_TYPE_WORDS["education"], key=len, reverse=True)) + ")$")),
+        ("government", re.compile(
+            r"(議院|会計検査院|人事院|県警|府警|道警|警視庁|検察庁|検察|地検|高検|最高検|"
+            r"地裁|高裁|最高裁|家裁|政府|内閣府|内閣|官邸)$")),
+        ("association", re.compile(r"(連合|同盟|協議会|労組|労連)$")),
+    )
     _ORG_WORDS = (
         ("medical_corp", re.compile(r"^(医療法人|社会福祉法人)")),
-        ("school_corp", re.compile(r"^学校法人|(学園|学院)$")),
+        ("school_corp", re.compile(r"^学校法人")),
+        _ORG_ADDITIONS[0],              # 大学院は「学院」より先。学校法人の優先は維持。
+        ("school_corp", re.compile(r"(学園|学院)$")),
+        *_ORG_ADDITIONS[1:],
         # 公的機関の語は業種語より先に見る（航空自衛隊・交通局・航空局 が transport にならないように）。
         # 局 は 放送局・テレビ局・ラジオ局（media）、郵便局・支局・薬局・事務局・編集局（いずれも service 相当）を除く。
         # 軍 は陸軍・海軍・空軍・国防軍・解放軍・連合軍だけを公的機関として扱い、裸の「軍」は含めない
@@ -338,6 +356,8 @@ class RuleCategorizer:
         n = norm.strip()
         if kind == "org":
             for cat, rx in cls._ORG_WORDS:
+                if (cat, rx) in cls._ORG_ADDITIONS and split_legal_form(n)[0] is not None:
+                    continue
                 if rx.search(n):
                     return cat
             return OTHER["org"]
@@ -375,14 +395,32 @@ class RuleCategorizer:
         n = norm.strip()
         words = cls._ORG_WORDS if kind == "org" else cls._FAC_WORDS if kind == "facility" else ()
         for _cat, rx in words:
+            if kind == "org" and (_cat, rx) in cls._ORG_ADDITIONS and split_legal_form(n)[0] is not None:
+                continue
             m = rx.search(n)
             if m:
                 return m.start(), m.end()
         return None
 
     @classmethod
+    def org_type_word(cls, norm: str, category: str) -> str | None:
+        """分類規則が認めたカテゴリだけから最長の末尾種別語を取り出す。
+
+        人事院のような機関名全体しか一致しない場合や、分類ヘッドだけの判定は保存しない。
+        値は定数から返し、原文の断片を Features に渡さない。
+        """
+        if category not in ORG_TYPE_WORDS or cls.categorize("org", norm) != category:
+            return None
+        rest = split_legal_form(norm)[2]
+        for word in sorted(ORG_TYPE_WORDS[category], key=len, reverse=True):
+            if rest.endswith(word):
+                return word if len(rest) > len(word) else None
+        return None
+
+    @classmethod
     def core_split(cls, kind: str, norm: str) -> int | None:
-        """avoid_parts がコア語を切り出す位置。種別語の表を順に見て、各表の最初の一致が ``norm`` の**末尾**で終わり、
+        """avoid_parts がコア語を切り出す位置。ORG の種別保存対象は最長末尾語の前（1文字コアも可）。
+        それ以外は種別語の表を順に見て、各表の最初の一致が ``norm`` の**末尾**で終わり、
         かつ開始位置が 2 以上になった最初の語の開始位置（``norm`` そのものの上。strip しない）。org はさらに、
         末尾一致かつ開始位置 2 以上の行が無いときだけ ``_ORG_CORE_SUFFIXES``（カテゴリ中立。categorize /
         type_word_span からは参照しない）を同じ条件で試す（先頭から一致する委員会・部署の行はここで「委員会」を
@@ -391,6 +429,10 @@ class RuleCategorizer:
         ``type_word_span`` とは別物: 「青葉交通データ」では type_word_span が categorize と同じ「交通」
         (2, 4、transport) を返すのに対し、core_split は末尾の「データ」の 4 を返す（コア語は「青葉交通」）。
         type_word_span をコア語の切り出しに使うと名前全体しか避けられず、コア語が偽名に混入しうる（最終レビュー C1）。"""
+        if kind == "org":
+            word = cls.org_type_word(norm, cls.categorize("org", norm))
+            if word is not None:
+                return len(norm) - len(word)
         words = cls._ORG_WORDS if kind == "org" else cls._FAC_WORDS if kind == "facility" else ()
         for _cat, rx in words:
             m = rx.search(norm)
@@ -457,7 +499,8 @@ def extract_features(kind: str, value: str, norm: str, category: str, *, keep: s
                         kata_foreign=kata_foreign, separator=sep)
     if kind == "org":
         form, pos, rest = split_legal_form(n)
-        return Features(kind, category, _script_of(rest, raw), length, legal_form=form, legal_form_pos=pos)
+        return Features(kind, category, _script_of(rest, raw), length, legal_form=form, legal_form_pos=pos,
+                        type_word=RuleCategorizer.org_type_word(n, category))
     if kind == "facility":
         org_prefix = next((p for p in ("市立", "県立", "私立", "町立") if n.startswith(p)), None)
         return Features(kind, category, script, length, org_prefix=org_prefix)
@@ -531,7 +574,7 @@ def _vocab_parts(n: str, vocab: tuple[str, ...] = _FAKE_CORE_VOCAB) -> tuple[str
 
 
 def avoid_parts(kind: str, norm: str) -> tuple[str, ...]:
-    """偽名に含めてはいけない元の部分（2 字以上）。人名は姓と名（漢字は姓プールの最長前方一致、カタカナは「・」区切りの
+    """偽名に含めてはいけない元の部分（原則2字以上。ORGの保存種別語の前のコアは1字も対象）。人名は姓と名（漢字は姓プールの最長前方一致、カタカナは「・」区切りの
     要素か GIVEN_KATA の最長前方一致と残り。分けられなければ名前全体）、組織・施設はコア語、住所は都道府県より下の
     市区町村・町名（都道府県は同一ブロックの別の市区町村なら再出現してよいため対象外）。LOCATION は地名そのものと、
     末尾が「都道府県市区町村州省」のいずれか1文字ならそれを除いた語幹（例: 「札幌市」→「札幌市」「札幌」、
@@ -575,6 +618,11 @@ def avoid_parts(kind: str, norm: str) -> tuple[str, ...]:
         if start is not None:
             core = rest[:start]
         parts = [core] if len(core) >= 2 and core != n else ([n] if len(n) >= 2 else [])
+        if kind == "org" and RuleCategorizer.categorize("org", n) in ORG_TYPE_WORDS:
+            # 種別語を保存する経路では1文字のコアも避ける（例: 衆 + 議院）。
+            if core and core != rest and core not in parts:
+                parts.append(core)
+            parts.extend(w for w in ORG_SERVICE_CORES + ORG_SERVICE_KATA_CORES if w in core)
         # fix round 3: core_split が切り出すコアは委員会・議会等の種別語の前をひとかたまりでしか扱わないため、
         # その内部（または市区町村接尾込みのコア末尾）に生成器の固有部分の語彙（ORG_CORES・KATA_CORES）が
         # 部分文字列として埋もれていても個別には避けられなかった（「中央青葉人事委員会」→ コア「中央青葉」の

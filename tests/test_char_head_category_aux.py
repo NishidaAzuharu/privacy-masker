@@ -11,10 +11,15 @@ from tests.test_char_head_predict import ALPHA, TinyTok  # noqa: E402
 from tests.test_char_head_vectors import DIM, HiddenRuleModel, _setup  # noqa: E402
 
 
-def test_category_vocabulary_matches_semantic():
+def test_existing_head_category_indices_stay_compatible_with_semantic():
     assert ch.CATEGORY_KINDS == ("org", "facility", "location")
     for kind in ch.CATEGORY_KINDS:
-        assert ch.CATEGORY_NAMES[kind] == tuple(CATEGORIES[kind])
+        # education is a rule-only addition. Keep the existing trained head's
+        # dimensions and category indices unchanged; no retraining is required.
+        expected = CATEGORIES[kind][:-1] if kind == "org" else CATEGORIES[kind]
+        assert ch.CATEGORY_NAMES[kind] == tuple(expected)
+        assert all(ch.CATEGORY_INDEX[kind][name] == CATEGORIES[kind].index(name) for name in expected)
+    assert CATEGORIES["org"][-1] == "education"
     assert ch.CATEGORY_KIND_INDEX == {"org": 0, "facility": 1, "location": 2}
     assert ch.CATEGORY_INDEX["org"]["finance"] == CATEGORIES["org"].index("finance")
 
