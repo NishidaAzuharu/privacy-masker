@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0 - 2026-11-25
 
 - **公知データを同梱**: Wikipedia 日本語版の見出し語（ns0、2026-09-02 取得、CC BY-SA 4.0）を 64bit ハッシュにした `.pmk` と、由来・件数・sha256 を記録した manifest を同梱した。
   `PublicKnowledge.load()` は明示の path → 環境変数 `PRIVACY_MASKER_KNOWLEDGE` → 同梱データの順に解決する。`PublicKnowledge.packaged()` は環境変数によらず同梱データを返す。
