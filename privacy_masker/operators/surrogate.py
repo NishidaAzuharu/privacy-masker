@@ -36,11 +36,13 @@ from ..secrets_types import SecretBytes
 from ..types import Entity
 from .base import TransformContext
 from .semantic import (
-    OTHER, CategoryResolver, HAS_BUILDING_RE, address_city_and_town, address_granularity, avoid_parts,
-    extract_features, gender_hint, is_municipality, split_person,
+    OTHER, CategoryResolver, HAS_BUILDING_RE, address_building_shape, address_city_and_town, address_granularity, avoid_parts,
+    extract_features, facility_shape, gender_hint, is_municipality, split_person,
 )
+from . import surrogate_geo
+from ..data.municipalities import load_municipalities
 from .surrogate_filter import SurrogateFilter
-from .surrogate_generators import generate, gen_org
+from .surrogate_generators import generate, gen_org, _affix
 
 _KINDS = ("person", "org", "facility", "location", "address", "auto")
 _LEGACY_KINDS = ("person", "org", "address")
@@ -127,7 +129,7 @@ def generate_address(value: str, rng: random.Random) -> str:
     return addr
 
 
-def _keep_city(value: str, fake: str) -> str:
+def _keep_city(value: str, fake: str, *, municipalities: bool = False) -> str:
     """keep="city": 原文の都道府県・市区町村を残し、町名・番地・建物・部屋を偽住所のもので置き換える。
 
     識別性ベース匿名化（docs/design_identifiability.md §3.5）: 市区町村までは公知で個人を
@@ -142,6 +144,15 @@ def _keep_city(value: str, fake: str) -> str:
     - 偽住所の側が分解できない（市区町村までしか無い等）
     """
     n = value.strip()
+    if municipalities:
+        data = load_municipalities()
+        pref, spelling, source, rest = data.split(n)
+        # 県なし町名は町域との区別が付かないので、keep の従来の保守的な判定を維持する。
+        if source and rest and (pref or source.kind not in ("町", "村")):
+            _pref, _spelling, target, tail = data.split(fake)
+            if target and tail:
+                return pref + spelling + tail
+            return fake
     if address_granularity(n) in ("pref", "city"):
         return fake
     city, _town = address_city_and_town(n)
@@ -247,6 +258,9 @@ class Surrogate:
     def _kind_for(self, entity_type: str) -> str | None:
         if self.kind != "auto":
             return self.kind
+        base = entity_type.split("_", 1)[0]
+        if self.semantic and base in ("LOCATION", "ADDRESS", "FACILITY"):
+            return _TYPE_TO_KIND[base]
         return _TYPE_TO_KIND.get(entity_type)
 
     def apply(self, value: str, entity: Entity, ctx: TransformContext) -> str:
@@ -261,23 +275,42 @@ class Surrogate:
             return self._non_target_token(value, norm, entity.entity_type, ctx)
         fake = self._apply_full(value, norm, entity, ctx, kind)
         if self.keep == "city" and kind == "address":
-            return _keep_city(value, fake)
+            return _keep_city(value, fake, municipalities=self.semantic and self.generator is None)
         return fake
 
     def _apply_full(self, value: str, norm: str, entity: Entity, ctx: TransformContext, kind: str) -> str:
-        etype = entity.entity_type
+        station = (self.semantic and self.generator is None and kind in ("location", "facility")
+                   and facility_shape(norm)[0] == "駅")
+        if station:
+            # 検出型によらず駅の生成・乱数・保存を共有する。既存の保存値も尊重する。
+            if self.strategy != "hmac":
+                for station_type in ("FACILITY", "LOCATION"):
+                    existing = ctx.get_token(station_type, norm)
+                    if existing is not None:
+                        return existing
+            kind = "facility"
+        etype = "FACILITY" if station else entity.entity_type
+        if self.semantic and self.generator is None and kind == "location":
+            etype = "LOCATION"
         if kind == "person" and self._linkable(value, norm):
             linked = self._apply_person_linked(value, norm, etype, ctx)
             if linked is not None:
                 return linked
         if self.strategy == "hmac":
-            return self._draw(value, norm, kind, entity, ctx, self._hmac_rng(ctx, etype, norm))
+            return self._draw(value, norm, kind, entity, ctx,
+                              self._hmac_rng(ctx, etype if station else entity.entity_type, norm))
         existing = ctx.get_token(etype, norm)
         if existing is not None:
             return existing
         last_error: StoreError | None = None
-        for _ in range(_SAVE_RETRIES):
+        for attempt in range(_SAVE_RETRIES):
             candidate = self._draw(value, norm, kind, entity, ctx, _SYS_RNG)
+            if attempt and self.semantic and self.generator is None and surrogate_geo.plan(self, kind, norm, ctx) is not None:
+                # 連動先を引き直すと他の地名と食い違う。表記別の復元が衝突した場合はトークンへ。
+                candidate = self._fallback_token(entity.entity_type if station else etype, norm, ctx)
+            if self.semantic and self.keep == "city" and kind == "address":
+                # vault には実際の出力を保存する（後段で県・市を戻す前の偽住所では復元できない）。
+                candidate = _keep_city(value, candidate, municipalities=self.generator is None)
             try:
                 ctx.save_token(etype, norm, candidate, original_value=value if self.strategy == "vault" else None)
                 return candidate
@@ -329,9 +362,27 @@ class Surrogate:
             # semantic=False 用の v0.8 generator が無い型。auto がここに解決したときは元の値を
             # 絶対に返さずトークンへ退避する（コンストラクタのエラーメッセージと整合）
             return self._fallback_token(entity.entity_type, norm, ctx)
+        geo = surrogate_geo.plan(self, kind, norm, ctx)
+        if geo is not None and not geo.address_prefix:
+            station_feats = extract_features(kind, value, norm, "transport") if geo.facility_affix else None
+            for _ in range(2 * _DRAW_RETRIES if station_feats else 1):
+                candidate = geo.replacement
+                if candidate and station_feats:
+                    candidate += _affix(station_feats, rng)
+                if candidate and self._restorable(candidate) and self._filter.reject_reason(
+                    candidate, original_norm=norm, avoid_parts=avoid_parts(kind, norm), text=text,
+                    check_public=False,
+                ) is None:
+                    return candidate
+            return self._fallback_token(entity.entity_type, norm, ctx)
         category = self._resolver.resolve(kind, norm, entity.vector)
         feats = extract_features(kind, value, norm, category, keep=self.keep if kind == "address" else None)
         avoid = avoid_parts(kind, norm)
+        if geo is not None and geo.address_prefix:
+            pref, spelling, _source, _rest = load_municipalities().split(norm, text)
+            _city, town = address_city_and_town(norm, city_prefix=pref + spelling)
+            if town and len(town) >= 2:
+                avoid += (town,)
         if kind == "org" and category in ("service", "education", "government", "association"):
             # 新コアが原文の固有部分に埋もれていても再利用しない。
             # 分類ヘッドだけでカテゴリが決まった場合も含める。
@@ -339,7 +390,7 @@ class Surrogate:
         # カテゴリ別 → 型レベルに退避。既に型レベル（OTHER）なら 2 周目は 1 周目と同じ特徴の引き直しにすぎないので
         # 1 周にまとめるが、試行回数は 2 周分を保つ（同じ特徴・同じ rng から同じ順に引くので、hmac で従来 11〜20 回目に
         # 通っていた値もそのまま通る。1 周 10 回に減らすとそれらがトークンに落ちる。最終レビュー M2）
-        if feats.category == OTHER[kind] or (kind == "org" and category in ("education", "government", "association")):
+        if feats.type_word or feats.category == OTHER[kind] or (kind == "org" and category in ("education", "government", "association")):
             # 種別保存対象は同じ特徴で20回試し、尽きたらトークンへ。企業名には退避しない。
             rounds = ((feats, 2 * _DRAW_RETRIES),)
         else:
@@ -350,9 +401,25 @@ class Surrogate:
                     candidate = gen_org(f, rng, neutral_service=False)
                 else:
                     candidate = generate(f, rng)
+                if geo is not None and geo.address_prefix:
+                    pref, spelling, _record, rest = load_municipalities().split(candidate)
+                    if not pref or not spelling:
+                        continue
+                    candidate = geo.replacement + rest
+                if kind == "address" and f.type_word:
+                    _word, _core, attrs = address_building_shape(candidate)
+                    # 実在地名を含む住所全体には公知照合を掛けず、架空の建物名を個別に検査する。
+                    building = (_word + _core if attrs.get("building_position") == "pre" else _core + _word) if _word else ""
+                    if not building or self._filter.reject_reason(
+                        building, original_norm=norm, avoid_parts=avoid, text=text,
+                    ) is not None:
+                        continue
+                    tail = candidate[candidate.index(building):]
+                    if self._filter.reject_reason(tail, original_norm=norm, text=text) is not None:
+                        continue
                 if candidate and self._restorable(candidate) and self._filter.reject_reason(
                     candidate, original_norm=norm, avoid_parts=avoid, text=text,
-                    check_public=_public_check_applies(kind, f.structure),
+                    check_public=_public_check_applies(kind, f.structure) or (kind == "location" and bool(f.type_word)),
                 ) is None:
                     return candidate
         return self._fallback_token(entity.entity_type, norm, ctx)

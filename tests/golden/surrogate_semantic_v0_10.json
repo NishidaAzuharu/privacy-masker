@@ -55,7 +55,7 @@
     {
       "kind": "org",
       "value": "西日本あおば信用金庫",
-      "expected": "中央早瀬証券"
+      "expected": "中央早瀬信用金庫"
     },
     {
       "kind": "org",
@@ -75,27 +75,27 @@
     {
       "kind": "facility",
       "value": "汐見クリニック",
-      "expected": "白樺総合病院"
+      "expected": "八雲クリニック"
     },
     {
       "kind": "facility",
       "value": "市立若草小学校",
-      "expected": "青葉幼稚園"
+      "expected": "市立富士見小学校"
     },
     {
       "kind": "facility",
       "value": "汐見駅",
-      "expected": "旭町空港"
+      "expected": "新星駅"
     },
     {
       "kind": "location",
       "value": "大分県",
-      "expected": "長崎県"
+      "expected": "熊本県"
     },
     {
       "kind": "location",
       "value": "札幌市",
-      "expected": "旭川市"
+      "expected": "寒河江市"
     },
     {
       "kind": "location",
@@ -110,12 +110,12 @@
     {
       "kind": "address",
       "value": "東京都新宿区西新宿1-2-3",
-      "expected": "神奈川県川崎市中原区港町2-9-5"
+      "expected": "茨城県北茨城市港町2-9-5"
     },
     {
       "kind": "address",
       "value": "神奈川県横浜市中区太田町５丁目８番地 サンハイツ301",
-      "expected": "埼玉県さいたま市大宮区東町４丁目８番１９号グラン富士見１２０３号室"
+      "expected": "千葉県四街道市東町４丁目８番１９号グラン富士見１２０３号室"
     },
     {
       "kind": "person",
@@ -130,7 +130,7 @@
     {
       "kind": "location",
       "value": "函館市",
-      "expected": "帯広市"
+      "expected": "南陽市"
     },
     {
       "kind": "org",
@@ -241,6 +241,111 @@
       "kind": "org",
       "value": "ソラミネ",
       "expected": "ナツアケホールディングス"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄證券",
+      "expected": "西汐見證券"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄信用組合",
+      "expected": "新白樺信用組合"
+    },
+    {
+      "kind": "org",
+      "value": "羽澄生命保険",
+      "expected": "南白樺生命保険"
+    },
+    {
+      "kind": "facility",
+      "value": "羽澄駅前",
+      "expected": "新星駅前"
+    },
+    {
+      "kind": "facility",
+      "value": "羽澄駅北口",
+      "expected": "丸昌駅北口"
+    },
+    {
+      "kind": "facility",
+      "value": "羽澄ビル5階",
+      "expected": "ミナトビル1階"
+    },
+    {
+      "kind": "facility",
+      "value": "都立羽澄高校",
+      "expected": "都立丸昌高校"
+    },
+    {
+      "kind": "facility",
+      "value": "羽澄幼稚園",
+      "expected": "富士見幼稚園"
+    },
+    {
+      "kind": "location",
+      "value": "羽澄駅前",
+      "expected": "新星駅前"
+    },
+    {
+      "kind": "location",
+      "value": "羽澄繁華街",
+      "expected": "幸町繁華街"
+    },
+    {
+      "kind": "address",
+      "value": "東京都新宿区西新宿2丁目8番1号 青葉ビル3階",
+      "expected": "茨城県北茨城市花園3丁目22番7号 ノゾミビル2階"
+    },
+    {
+      "kind": "address",
+      "value": "東京都新宿区西新宿2丁目8番1号 メゾン青葉 802号室",
+      "expected": "茨城県北茨城市港町2丁目17番9号 メゾンコモレビ 7号室"
+    },
+    {
+      "kind": "location",
+      "value": "宮城県仙台市",
+      "expected": "岩手県八幡平市"
+    },
+    {
+      "kind": "location",
+      "value": "名取市",
+      "expected": "花巻市"
+    },
+    {
+      "kind": "location",
+      "value": "新宿区",
+      "expected": "北茨城市"
+    },
+    {
+      "kind": "location",
+      "value": "石狩郡当別町",
+      "expected": "西村山郡西川町"
+    },
+    {
+      "kind": "location",
+      "value": "仙台駅前",
+      "expected": "八幡平駅前"
+    },
+    {
+      "kind": "facility",
+      "value": "新宿区役所",
+      "expected": "北茨城市役所"
+    },
+    {
+      "kind": "facility",
+      "value": "仙台駅",
+      "expected": "八幡平駅"
+    },
+    {
+      "kind": "facility",
+      "value": "仙台駅北口",
+      "expected": "八幡平駅北口"
+    },
+    {
+      "kind": "facility",
+      "value": "新大久保駅",
+      "expected": "山彦駅"
     }
   ]
 }

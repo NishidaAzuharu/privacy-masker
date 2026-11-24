@@ -3,10 +3,10 @@
   PYTHONPATH=. .venv/bin/python examples/library_usage.py
 
 構成 = CharHeadNerDetector（Hugging Face Hub の本番モデル。初回に取得してキャッシュ）+ RegexDetector.default_ja() + HandleDetector()
-       + MorphologicalRefiner()（境界補正）+ 任意で IdentifiabilityAnnotator（公知エンティティの保持。公知データ .pmk が要る）
+       + MorphologicalRefiner()（境界補正）+ 任意で IdentifiabilityAnnotator（公知エンティティの保持。同梱の公知データを使用）
 NER モデルは環境変数 PRIVACY_MASKER_MODEL（ローカルのフォルダか Hub のリポジトリ ID）で差し替えられる。
 char_head.safetensors があるフォルダは CharHeadNerDetector、無ければ TransformersNerDetector で読む。
-公知データ .pmk は PRIVACY_MASKER_KNOWLEDGE か、データフォルダ PRIVACY_MASKER_DRIVE_DIR 配下の jawiki_titles_ns0.pmk（無ければ D. を飛ばす）。
+公知データは PublicKnowledge.load() で同梱データを読み、PRIVACY_MASKER_KNOWLEDGE で差し替えられる。
 """
 from __future__ import annotations
 
@@ -18,10 +18,7 @@ from privacy_masker.detectors import CharHeadNerDetector, HandleDetector, RegexD
 from privacy_masker.hub import DEFAULT_MODEL_ID, resolve_model_dir
 from privacy_masker.operators import Surrogate, Tokenize
 
-# 公知データ .pmk の置き場。環境変数 PRIVACY_MASKER_DRIVE_DIR で差し替える
-DATA_DIR = os.path.expanduser(os.environ.get("PRIVACY_MASKER_DRIVE_DIR", "~/privacy-masker-data"))
 MODEL = os.environ.get("PRIVACY_MASKER_MODEL", DEFAULT_MODEL_ID)   # 本番 NER（Hub の文字ヘッドモデル）
-KNOWLEDGE = os.environ.get("PRIVACY_MASKER_KNOWLEDGE", f"{DATA_DIR}/jawiki_titles_ns0.pmk")   # standard レベル用の公知データ（Wikipedia 見出し語）
 
 
 def load_ner(model: str):
@@ -79,15 +76,12 @@ r = engine_c.transform(DOC)
 show("C. surrogate（自然な仮名、住所は市まで保持）", r, DOC)
 
 # D. standard: 識別性ベース。公知のエンティティ（公人・有名施設・地名）は残し、私人に帰属するものだけ匿名化
-if os.path.exists(KNOWLEDGE):
-    knowledge = PublicKnowledge.load(KNOWLEDGE)
-    annot = IdentifiabilityAnnotator(level="standard", knowledge=knowledge)
-    engine_d = PrivacyEngine(detectors=detectors, policy=Policy.preset("standard"), refiner=refiner, annotators=[annot])
-    DOC_D = "岸田首相は新宿駅前で演説した。同日、田中さんは西新宿五丁目駅の近くのトヨタ自動車の販売店で契約した。"
-    r = engine_d.transform(DOC_D)
-    show("D. standard（公知は保持、私人の準識別子は匿名化）", r, DOC_D)
-else:
-    print(f"\n===== D. standard =====\n公知データが無いので飛ばします: {KNOWLEDGE}（tools/build_knowledge.py で生成、PRIVACY_MASKER_KNOWLEDGE で指定）")
+knowledge = PublicKnowledge.load()
+annot = IdentifiabilityAnnotator(level="standard", knowledge=knowledge)
+engine_d = PrivacyEngine(detectors=detectors, policy=Policy.preset("standard"), refiner=refiner, annotators=[annot])
+DOC_D = "岸田首相は新宿駅前で演説した。同日、田中さんは西新宿五丁目駅の近くのトヨタ自動車の販売店で契約した。"
+r = engine_d.transform(DOC_D)
+show("D. standard（公知は保持、私人の準識別子は匿名化）", r, DOC_D)
 
 # E. detect() だけ使う（自前の後処理をしたい場合）
 print("\n===== E. detect()（変換せず検出結果だけ） =====")

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -79,12 +82,18 @@ def test_stage_builds_a_clean_folder_with_card_and_manifest(tmp_path):
     dumped = json.dumps(manifest, ensure_ascii=False)
     assert "/Users" not in dumped and "v11" not in dumped and "avg_ep" not in dumped and "outputs_run" not in dumped
     assert manifest["smoke_test"] is None and manifest["label_list"][0] == "O"
+    assert set(manifest) == {
+        "repo_id", "license", "library", "library_version", "detector", "base_model", "base_model_revision",
+        "label_list", "added_parameters", "files", "smoke_test", "staged_at",
+    }
+    assert list(manifest["files"]) == list(pub.REQUIRED_FILES)
     assert manifest["base_model"] == "cl-nagoya/ruri-v3-30m" and len(manifest["base_model_revision"]) == 40
 
     card = (out / "README.md").read_text(encoding="utf-8")
     assert card.startswith("---\n") and "license: apache-2.0" in card and "base_model: cl-nagoya/ruri-v3-30m" in card
     assert 'CharHeadNerDetector(model="owner/ja-pii-ner"' in card
     assert "$" not in card                                              # 置き換え漏れなし
+    assert "人名の役割ヘッド" not in card and "person_role" not in card
     assert "v11" not in card and "avg_ep" not in card and "epoch0" not in card   # 第三者向け: 内部の版名を出さない
     assert "github.com/NishidaAzuharu/privacy-masker" in card            # ライブラリへの導線
     assert manifest["files"]["model.safetensors"]["sha256"] in card     # SHA 表が埋まっている
@@ -143,3 +152,190 @@ def test_help_runs_without_drive(tmp_path):
     env = dict(os.environ, PYTHONPATH=root, PRIVACY_MASKER_DRIVE_DIR="/nonexistent")
     r = subprocess.run([sys.executable, os.path.join(root, "tools", "publish_model_hf.py"), "--help"], capture_output=True, text=True, env=env)
     assert r.returncode == 0 and "--repo-id" in r.stdout and "--dry-run" in r.stdout
+    assert "--person-role-head DIR" in r.stdout
+
+
+def _write_role_head(model_dir, head_dir, *, head_type="linear", metadata=None):
+    np = pytest.importorskip("numpy")
+    st = pytest.importorskip("safetensors.numpy")
+    head_dir.mkdir(exist_ok=True)
+    dim = 3 * json.loads((model_dir / "config.json").read_text())["hidden_size"]
+    shapes = ({"weight": (2, dim), "bias": (2,)} if head_type == "linear" else
+              {"w1": (3, dim), "b1": (3,), "w2": (2, 3), "b2": (2,)})
+    weights = {f"person.{key}": np.zeros(shape, dtype="float32") for key, shape in shapes.items()}
+    st.save_file(weights, str(head_dir / pub.PERSON_ROLE_FILES[1]), metadata=metadata)
+    cfg = {
+        "format_version": 1, "head_type": head_type, "features": "span_ctx", "threshold": 0.75,
+        "labels": {"person": ["private", "public"]},
+        "encoder_sha256": pub.sha256_file(str(model_dir / "model.safetensors")),
+    }
+    (head_dir / pub.PERSON_ROLE_FILES[0]).write_text(json.dumps(cfg), encoding="utf-8")
+    return cfg
+
+
+def test_card_without_role_head_is_byte_identical_to_original_template():
+    template = Path(pub.DEFAULT_TEMPLATE).read_text(encoding="utf-8")
+    keys = ("repo_id", "license", "version", "date", "base_revision", "sha_table")
+    unchanged = pub.render_model_card(template, {key: "$" + key for key in keys})
+    # 役割ヘッド節の追加前のテンプレート全文。空行も含めて互換性を検査する。
+    assert hashlib.sha256(unchanged.encode()).hexdigest() == "ccef1040206b2af13b28b9118e3c6f5f518edeb396063e939b5400c2ace000f6"
+
+
+@pytest.mark.parametrize("head_type", ["linear", "mlp"])
+def test_stage_includes_role_head_files_manifest_and_card(tmp_path, monkeypatch, head_type):
+    from privacy_masker import PersonRoleHead
+
+    model = _fake_model_dir(tmp_path)
+    head = tmp_path / "head"
+    cfg = _write_role_head(model, head, head_type=head_type)
+    out = tmp_path / "stage"
+    load = PersonRoleHead.load
+    loaded = []
+
+    def checked_load(path):
+        assert Path(path) == out
+        loaded.append(path)
+        return load(path)
+
+    monkeypatch.setattr(PersonRoleHead, "load", checked_load)
+    manifest = pub.stage(str(model), str(out), repo_id="o/n", license="mit", smoke=False, person_role_head=str(head))
+    assert len(loaded) == 1
+    assert set(p.name for p in out.iterdir()) == set(pub.REQUIRED_FILES + pub.PERSON_ROLE_FILES + ("README.md", pub.MANIFEST_NAME))
+    for name in pub.PERSON_ROLE_FILES:
+        assert (out / name).read_bytes() == (head / name).read_bytes()
+        assert manifest["files"][name] == {"bytes": (out / name).stat().st_size, "sha256": pub.sha256_file(str(out / name))}
+    assert manifest["person_role_head"] == {key: cfg[key] for key in ("features", "threshold", "head_type", "format_version")}
+    assert json.loads((out / pub.MANIFEST_NAME).read_text()) == manifest
+    card = (out / "README.md").read_text(encoding="utf-8")
+    assert "## 人名の役割ヘッド（任意）" in card
+    assert "**0.75**" in card and "person_role_threshold=0.8" in card
+    assert 'CharHeadNerDetector(model="o/n")' in card
+    assert "knowledge=PublicKnowledge.load(), person_role=ner.person_role_head" in card
+    assert 'annotators=[annotator], policy=Policy.preset("standard")' in card
+    assert "gpt-6.1-terra" in card and "エンコーダを凍結" in card and "弱いラベル" in card
+    assert "既定では使いません" in card and "公人を隠す" in card
+    assert "$" not in card and "person_role_eval" not in card and "<!-- person_role_head:" not in card
+    assert pub.scan_text_files(str(out)) == []
+
+
+@pytest.mark.parametrize("filename", pub.PERSON_ROLE_FILES)
+def test_stage_requires_both_role_files(tmp_path, filename):
+    model = _fake_model_dir(tmp_path)
+    head = tmp_path / "head"
+    _write_role_head(model, head)
+    (head / filename).unlink()
+    with pytest.raises(SystemExit, match=filename):
+        pub.stage(str(model), str(tmp_path / "stage"), repo_id="o/n", license="mit", smoke=False, person_role_head=str(head))
+
+
+@pytest.mark.parametrize("smoke", [False, True])
+def test_stage_rejects_role_encoder_mismatch_before_smoke(tmp_path, monkeypatch, smoke):
+    from privacy_masker.exceptions import ConfigurationError
+
+    model = _fake_model_dir(tmp_path)
+    head = tmp_path / "head"
+    _write_role_head(model, head)
+    (model / "model.safetensors").write_bytes(b"different-encoder")
+    monkeypatch.setattr(pub, "smoke_test", lambda *a, **k: pytest.fail("encoder must be checked first"))
+    with pytest.raises(ConfigurationError, match="encoder SHA-256 mismatch"):
+        pub.stage(str(model), str(tmp_path / "stage"), repo_id="o/n", license="mit", smoke=smoke, person_role_head=str(head))
+
+
+@pytest.mark.parametrize("filename", pub.PERSON_ROLE_FILES)
+def test_stage_scans_role_config_and_weights_metadata(tmp_path, filename):
+    model = _fake_model_dir(tmp_path)
+    head = tmp_path / "head"
+    cfg = _write_role_head(model, head, metadata={"source": DEV_PREFIX})
+    if filename.endswith(".json"):
+        _write_role_head(model, head)
+        cfg["source"] = DEV_PREFIX
+        (head / filename).write_text(json.dumps(cfg), encoding="utf-8")
+    with pytest.raises(SystemExit, match=filename) as exc:
+        pub.stage(str(model), str(tmp_path / "stage"), repo_id="o/n", license="mit", smoke=False, person_role_head=str(head))
+    assert "macOS home path" in str(exc.value) and "e-mail address" in str(exc.value)
+    assert DEV_PREFIX not in str(exc.value)
+
+
+def test_role_files_in_source_are_not_published_without_option(tmp_path):
+    model = _fake_model_dir(tmp_path)
+    out = tmp_path / "before"
+    args = dict(repo_id="o/n", license="mit", smoke=False, date="2026-10-04")
+    pub.stage(str(model), str(out), **args)
+    _write_role_head(model, model)
+    after = tmp_path / "after"
+    pub.stage(str(model), str(after), **args)
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == {p.name: p.read_bytes() for p in after.iterdir()}
+
+
+def test_main_role_dry_run_does_not_upload(tmp_path, monkeypatch):
+    model = _fake_model_dir(tmp_path)
+    head = tmp_path / "head"
+    _write_role_head(model, head)
+    monkeypatch.setattr(pub, "upload", lambda *a, **k: pytest.fail("dry-run must not upload"))
+    out = tmp_path / "stage"
+    assert pub.main(["--repo-id", "o/n", "--model", str(model), "--person-role-head", str(head),
+                     "--out", str(out), "--dry-run", "--no-smoke"]) == 0
+    assert "person_role_head" in json.loads((out / pub.MANIFEST_NAME).read_text())
+
+
+@pytest.mark.parametrize("head_type", ["linear", "mlp"])
+def test_role_smoke_runs_detector_on_staged_model_with_context_vectors(tmp_path, monkeypatch, head_type):
+    pytest.importorskip("torch")
+    import privacy_masker.char_head as ch
+    import privacy_masker.detectors as detectors
+    from tests.test_char_head_vectors import HiddenRuleModel
+    from tests.test_char_head_predict import TinyTok
+
+    model = _fake_model_dir(tmp_path)
+    head = tmp_path / "head"
+    _write_role_head(model, head, head_type=head_type)
+    out = tmp_path / "stage"
+    text = "あいうえおかきくけこ。"
+    monkeypatch.setattr(pub, "SMOKE_TEXT", text)
+    tok = TinyTok(text)
+    synthetic = HiddenRuleModel(text, tok, [(0, 2, "PERSON"), (3, 5, "ADDRESS")])
+    real_detector = detectors.CharHeadNerDetector
+    seen = []
+
+    def detector(**kwargs):
+        assert kwargs == {"model": str(out), "device": "cpu", "person_role_head": True}
+        seen.append(kwargs)
+        return real_detector(tokenizer=tok, **kwargs)
+
+    monkeypatch.setattr(ch, "load_char_model", lambda *a, **k: synthetic)
+    monkeypatch.setattr(detectors, "CharHeadNerDetector", detector)
+    manifest = pub.stage(str(model), str(out), repo_id="o/n", license="mit", person_role_head=str(head))
+    assert len(seen) == 1
+    assert manifest["smoke_test"]["person_role_probabilities"] == [0.5]
+    assert {e[0] for e in manifest["smoke_test"]["entities"]} == pub.SMOKE_REQUIRED_LABELS
+
+
+@pytest.mark.parametrize("probability", [None, -0.1, 1.1, float("nan"), float("inf"), 0.0, 1.0])
+def test_role_smoke_checks_probability_range(monkeypatch, probability):
+    import privacy_masker.detectors as detectors
+
+    entities = [SimpleNamespace(entity_type=label, start=i, end=i + 1, score=1, vector=b"vector")
+                for i, label in enumerate(sorted(pub.SMOKE_REQUIRED_LABELS))]
+    det = SimpleNamespace(detect=lambda _: entities, person_role_head=lambda vector: probability)
+    monkeypatch.setattr(detectors, "CharHeadNerDetector", lambda **kwargs: det)
+    if probability in (0.0, 1.0):
+        assert pub.smoke_test("stage", person_role_head=True)["person_role_probabilities"] == [probability]
+    else:
+        with pytest.raises(SystemExit, match="役割確率"):
+            pub.smoke_test("stage", person_role_head=True)
+
+
+def test_smoke_without_option_keeps_original_result(monkeypatch):
+    import privacy_masker.detectors as detectors
+
+    entities = [SimpleNamespace(entity_type=label, start=i, end=i + 1, score=1)
+                for i, label in enumerate(sorted(pub.SMOKE_REQUIRED_LABELS))]
+
+    def detector(**kwargs):
+        assert kwargs == {"model": "model", "device": "cpu"}
+        return SimpleNamespace(detect=lambda _: entities)
+
+    monkeypatch.setattr(detectors, "CharHeadNerDetector", detector)
+    assert pub.smoke_test("model") == {
+        "text": pub.SMOKE_TEXT, "entities": [[e.entity_type, e.start, e.end, 1] for e in entities],
+    }

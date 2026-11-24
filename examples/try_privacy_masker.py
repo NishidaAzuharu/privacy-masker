@@ -14,7 +14,7 @@
     --key STR         hmacの鍵（既定: デモ用固定鍵。同じ鍵なら同一人物=同一偽名）
     --show-entities   検出内訳（位置・スコア・operator）も表示
     --level LV        strict（既定・全エンティティを匿名化）/ standard（公人・公知は残す）/ minimal
-    --knowledge PATH  公知データ .pmk（既定: データフォルダ PRIVACY_MASKER_DRIVE_DIR 配下の jawiki_titles_ns0.pmk。standard/minimal で使用）
+    --knowledge PATH  公知データ .pmk（省略時: PRIVACY_MASKER_KNOWLEDGE → 同梱データ。standard/minimal で使用）
     --out PATH        マスク結果をファイルにも保存
     --no-bench        （デモ時）バッチスループット計測をスキップ
 
@@ -55,8 +55,6 @@ try:
 except ImportError:
     REFINER = None  # 既定のSpanRefinerにフォールバック
 
-# データフォルダ（公知データ .pmk の置き場）。環境変数 PRIVACY_MASKER_DRIVE_DIR で差し替える
-DATA_DIR = os.path.expanduser(os.environ.get("PRIVACY_MASKER_DRIVE_DIR", "~/privacy-masker-data"))
 
 KEY = b"try-privacy-masker-demo-key"  # デモ用。実運用では環境変数などから渡すこと
 
@@ -100,8 +98,8 @@ def main() -> None:
                     help="cpu / mps / cuda（既定: 文字ヘッドモデルは cpu、token モデルは自動選択）")
     ap.add_argument("--level", default="strict", choices=["strict", "standard", "minimal"],
                     help="匿名化レベル（既定 strict=現行。standard は公人・公知を残す）")
-    ap.add_argument("--knowledge", default=os.environ.get("PRIVACY_MASKER_KNOWLEDGE", f"{DATA_DIR}/jawiki_titles_ns0.pmk"),
-                    help="公知データ .pmk（既定: PRIVACY_MASKER_KNOWLEDGE、無ければデータフォルダの jawiki_titles_ns0.pmk。tools/build_knowledge.py で生成）")
+    ap.add_argument("--knowledge", default=None,
+                    help="公知データ .pmk（省略時: PRIVACY_MASKER_KNOWLEDGE → 同梱データ）")
     ap.add_argument("--no-bench", action="store_true")
     args = ap.parse_args()
 
@@ -146,9 +144,6 @@ def main() -> None:
     if args.level != "strict":
         # 識別性ベース匿名化（v0.8）: 公人・公知は *_PUBLIC サブタイプになり Keep で残る。
         # 私人・非公知・私人に帰属する準識別子はサブタイプが付かず、上の rules / default で匿名化
-        if not os.path.exists(args.knowledge):
-            sys.exit(f"公知データが見つかりません: {args.knowledge}\n"
-                     "PYTHONPATH=. python tools/build_knowledge.py で生成するか --knowledge で指定してください")
         knowledge = PublicKnowledge.load(args.knowledge)
         print(f"level: {args.level}  公知データ: {knowledge}")
         rules.update(Policy.preset(args.level).rules)

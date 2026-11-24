@@ -9,6 +9,7 @@ import sys
 import pytest
 
 from privacy_masker.category_head import CATEGORY_HEAD_CONFIG, CATEGORY_HEAD_WEIGHTS, HeadCategorizer
+from privacy_masker import PersonRoleHead
 
 
 def test_import_does_not_pull_in_torch_or_safetensors_or_numpy():
@@ -18,6 +19,7 @@ def test_import_does_not_pull_in_torch_or_safetensors_or_numpy():
     code = (
         "import sys\n"
         "import privacy_masker.category_head\n"
+        "from privacy_masker import PersonRoleHead\n"
         "assert 'torch' not in sys.modules, 'torch should not be imported at module level'\n"
         "assert 'safetensors' not in sys.modules, 'safetensors should not be imported at module level'\n"
         "assert 'numpy' not in sys.modules, 'numpy should not be imported at module level'\n"
@@ -27,11 +29,17 @@ def test_import_does_not_pull_in_torch_or_safetensors_or_numpy():
     assert result.returncode == 0 and "OK" in result.stdout, result.stderr
 
 
-def test_load_without_safetensors_raises_import_error_not_configuration_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize("loader,config_name,weights_name", [
+    (HeadCategorizer, CATEGORY_HEAD_CONFIG, CATEGORY_HEAD_WEIGHTS),
+    (PersonRoleHead, "person_role_head.json", "person_role_head.safetensors"),
+])
+def test_load_without_safetensors_raises_import_error_not_configuration_error(
+    tmp_path, monkeypatch, loader, config_name, weights_name,
+):
     # safetensors が入っていない（[transformers] extra 無し）ことを「ヘッドのファイルが壊れている」
     # （ConfigurationError）に丸め込まない。minimal profile では本当に無く、full profile では sys.modules で塞ぐ
-    (tmp_path / CATEGORY_HEAD_CONFIG).write_text("{}", encoding="utf-8")
-    (tmp_path / CATEGORY_HEAD_WEIGHTS).write_bytes(b"weights")
+    (tmp_path / config_name).write_text("{}", encoding="utf-8")
+    (tmp_path / weights_name).write_bytes(b"weights")
     monkeypatch.setitem(sys.modules, "safetensors.numpy", None)
     with pytest.raises(ImportError):
-        HeadCategorizer.load(str(tmp_path))
+        loader.load(str(tmp_path))

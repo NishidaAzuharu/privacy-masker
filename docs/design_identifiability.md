@@ -70,6 +70,44 @@
 
 レベルを先に選ぶ理由は予測可能性。自動判定だけに委ねると「なぜ残った/消えたか」が利用者に見えず、証拠不足時の挙動も定義できない。逆にレベルだけでは「新宿駅の周辺」と「最寄りの新宿駅」を分けられない。上限をレベルで、個別判断を自動で、という分担にする。
 
+### 任意の人名役割ヘッド（standard の文脈判定）
+
+公知データの姓名一致は、その言及が公人としてのものかを保証しない。同姓同名の私人を残さないため、
+`IdentifiabilityAnnotator(person_role=None, person_role_threshold=None)` に任意の拒否判定を追加する。
+ヘッドの確率だけで公知へ昇格させると、規則が保持しなかった人名まで残すことになるため、**拒否だけ**に使う。
+
+- 適用範囲は `standard` の規則2（フルネームと公知データの一致）。規則1（公職肩書き）は優先し、ヘッドへ渡さない。
+  `strict` / `minimal` と `person_role=None` の判定は従来どおり。
+- `person_role(entity.vector)` が返す public 確率が閾値未満なら、公知を取り消す。閾値以上は既存規則の判定を維持する。
+  ベクトルが無い・空・次元不一致・ヘッドが `None` を返す場合も取り消す（フェイルクローズ）。
+- 取り消しは `private_spans` を作る前に行う。その人名は私人として、近くの施設・地名・組織の帰属判定に影響する。
+- 閾値は明示の `person_role_threshold`、次に `person_role.threshold`。どちらも無い場合は `ConfigurationError`。
+  bool・非数値・非有限値・[0, 1] 外は認めない。閾値ちょうどは拒否しない。
+
+公開 API は `from privacy_masker import PersonRoleHead`、`PersonRoleHead.load(model_dir, head_dir=None)`、
+`head(vector: bytes) -> float | None`。`head.features` は `span_ctx`、`head.threshold` は設定値。
+`person_role_head.json` と `person_role_head.safetensors` を読み、format_version=1、linear / mlp、
+span_ctx、labels が `{"person": ["private", "public"]}` であること、形状、閾値、encoder の SHA-256 を検査する。
+欠落ファイルは `FileNotFoundError`、不正内容は `ConfigurationError`。重みはパッケージに同梱しない。
+数値計算・ベクトルのデコード・入力次元の照合・SHA-256 は分類ヘッドと共有し、torch の import は不要。
+MLP は float32 の Linear → GELU(tanh) → Linear → softmax で推論する。
+
+`CharHeadNerDetector(person_role_head="auto")` は JSON があるときだけ読み込み、`True` なら必須、
+`False` なら読み込まない。モデルオブジェクトを直接渡す経路ではヘッドなしで、`True` はエラーにする。
+Hub の既存取得パターン `*.json` / `*.safetensors` に両ファイルが含まれる。
+分類・役割ヘッドのどちらかが文脈を要求すれば `Entity.vector` は `span_ctx` にする。
+`span_mean` の分類ヘッドには入力が3区画なら先頭だけを使い、次元不一致による意図しないフォールバックを避ける。
+`span_vectors=False` は従来どおりベクトルを作らないため、役割判定ではフェイルクローズとなる。
+
+自動ロードだけでは判定を有効化しない。Python では `person_role=detector.person_role_head` を渡す。
+設定ファイルでは `person_role: detector` で同じ設定の char_head のヘッドを参照し、
+利用可能なヘッドが無い・複数あって一意に選べない場合は `ConfigurationError`。
+古いモデルにヘッドが無い場合は利用できず、明示的に必要なら検出器側を `person_role_head=True` にする。
+
+評価ツールは `--person-role-head` で規則だけ／規則 + ヘッドの保持件数を並べる。
+閾値の上書きは `--person-role-threshold`。既定および `--no-person-role-head` は規則だけで、
+出力は件数・文字数に限定し、評価本文や表層の例は出さない。
+
 ## 2. アーキテクチャ
 
 ```
@@ -91,7 +129,7 @@ Detector群 → Refiner → EntityResolver → [新] Annotator群 → Policy(ope
 from privacy_masker import IdentifiabilityAnnotator, PrivacyEngine, Policy, PublicKnowledge
 from privacy_masker.operators import Surrogate
 
-knowledge = PublicKnowledge.load("jawiki_titles_ns0.pmk")   # tools/build_knowledge.py で生成
+knowledge = PublicKnowledge.load()   # 同梱データ（環境変数または path で差し替え可）
 policy = Policy.preset("standard")                           # *_PUBLIC → Keep、それ以外はトークン化
 policy.rules.update({
     "PERSON": Surrogate(kind="person", key=KEY),
@@ -110,7 +148,7 @@ engine = PrivacyEngine(
 
 - **Wikipedia 日本語版 見出し語（ns0）**: 2,464,443 件。正規化（`_`→空白、全角空白統一）して 64bit ハッシュにし、ソート済み配列 + 二分探索で照合。約 20MB（括弧付き曖昧さ回避・年号・一覧を除くと 203万件・16MB）。Bloom フィルタ（3MB）は偽陽性 1% が「私人を公知と誤る=漏れ方向」なので採用しない。
 - **Wikidata 人物（P31=Q5、日本語ラベルあり、sitelinks ≥ 閾値）**: 公人の許可リスト。閾値は §4.5 の観測から 10 前後を初期値にし、評価で調整する。
-- 配布: 公知データ（`.pmk`）はリポジトリにも wheel にも同梱しない。利用者が `tools/build_knowledge.py` で生成し、`PublicKnowledge.load(path)` か環境変数 `PRIVACY_MASKER_KNOWLEDGE` で渡す（別パッケージでの配布は将来案、未実装）。strict では不要。
+- 配布: 公知データ（`public_knowledge_ja.pmk`、約 22MB、2,821,535 ハッシュ）をリポジトリと wheel に同梱し、`PublicKnowledge.load()` で利用できる。明示の path → 環境変数 `PRIVACY_MASKER_KNOWLEDGE` → 同梱データの順に解決する。`PublicKnowledge.packaged()` は同梱データを直接選び、プロセス内でキャッシュする。注釈器の `knowledge=None` と設定の `knowledge` 省略時は従来どおり公知データなし。strict では不要。
 - 構築スクリプト `tools/build_knowledge.py`（見出し語ソースはデータフォルダ `PRIVACY_MASKER_DRIVE_DIR` に置いた Wikipedia 見出し語ダンプ（jawiki ns0、gzip テキスト、2026-09-02 取得））。
 
 ### 3.2 PublicFigureClassifier（PERSON の公人判定）
@@ -230,7 +268,7 @@ wikinews で保持されなかった公知は、複合形（京都府京都市�
 ## 5. 実現可能性・UX の評価
 
 - **性能**: ハッシュ照合は 1 件あたり μs オーダーで、NER（約 5ms/文書）に対して無視できる。CPU スループット要件は維持される。
-- **配布**: 判定データ約 20MB はライブラリに同梱せず、利用者が生成して渡す。strict のみの利用者には不要。ダンプ更新は年 1〜2 回で十分（見出し語の増分は小さい）。
+- **配布**: 判定データ約 22MB はライブラリに同梱し、wheel に含める。独自の語彙は `tools/build_knowledge.py` や `PublicKnowledge.from_iterable()` で作り、path または環境変数で差し替えられる。同梱データの更新には `tools/build_knowledge.py --packaged --dump-date YYYY-MM-DD` を使い、manifest も生成する。ダンプ更新は年 1〜2 回で十分（見出し語の増分は小さい）。
 - **透明性**: サブタイプが `TransformedEntity.entity_type` に出るため、保持理由が結果から追える。
 - **モデル**: 再学習不要。将来 PERSON_PUBLIC を NER ラベルにする案は、名前の暗記で汎化を損ねる恐れがあるため採らない。
 - **LLM による判定**（肩書きも許可リストも無いときの公私判断）: 精度は高いが CPU 要件とコストに合わない。オフラインのバッチ後処理として任意の Annotator に差し込める余地だけ残す。
@@ -261,5 +299,5 @@ Phase 1 だけでも §0 の失敗例は解消し、wikinews の過剰マスク�
 - 公知データのビルド: `tools/build_knowledge.py`（データフォルダの見出し語ダンプ `.txt.gz` → `.pmk`）
 - 安全コスト測定: `tools/eval_identifiability.py`（ライブラリ実装で §4.6 を再現）
 - お試し: `PYTHONPATH=. .venv/bin/python examples/try_privacy_masker.py --level standard "…"`
-- 見出し語データ: データフォルダ（環境変数 `PRIVACY_MASKER_DRIVE_DIR` で指定）に置く Wikipedia 見出し語ダンプ（jawiki ns0 全件、gzip テキスト 15.8MB、2026-09-02 取得）→ ビルド済み `jawiki_titles_ns0.pmk`（22.6MB、282 万エントリ、ロード即時、照合 4.6μs）。ダンプ・ビルド済みファイルともリポジトリには含めない
+- 見出し語データ: Wikipedia 見出し語ダンプ（jawiki ns0 全件、gzip テキスト 15.8MB、2026-09-02 取得）からビルドした `privacy_masker/data/public_knowledge_ja.pmk`（約 22MB、2,821,535 ハッシュ）と manifest をリポジトリ・wheel に同梱する。ダンプ自体は同梱しない。
 - 評価データ: データフォルダ内（非公開）

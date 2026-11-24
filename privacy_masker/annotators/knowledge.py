@@ -6,6 +6,8 @@
 - 偽陽性は「私人を公知と誤る = 漏れ方向」なので Bloom フィルタは使わず、正確なハッシュ集合にする
   （blake2b 64bit の偶然衝突は 246 万件で約 1.6e-7 であり実用上無視できる）
 - メモリは 8B/件（246 万件で約 20MB）。照合は二分探索 O(log n)
+- ``load()`` は明示の path → ``PRIVACY_MASKER_KNOWLEDGE`` → 同梱データの順に読む。
+  ``packaged()`` は環境変数によらず同梱データを読み、プロセス内でキャッシュする。
 """
 from __future__ import annotations
 
@@ -18,6 +20,8 @@ import struct
 import sys
 import unicodedata
 from array import array
+from functools import lru_cache
+from importlib import resources
 from typing import Iterable, Iterator
 
 from ..exceptions import ConfigurationError
@@ -27,6 +31,7 @@ _HEADER = struct.Struct("<Q")
 _WS = re.compile(r"\s+")
 _TITLE_HEADER = "page_title"  # Wikipedia のタイトルダンプ先頭行
 ENV_VAR = "PRIVACY_MASKER_KNOWLEDGE"
+PACKAGED_KNOWLEDGE_NAME = "public_knowledge_ja.pmk"
 
 
 def normalize_surface(surface: str) -> str:
@@ -84,14 +89,24 @@ class PublicKnowledge:
         return cls.from_iterable(_iter_titles(path))
 
     @classmethod
+    def packaged(cls) -> "PublicKnowledge":
+        """同梱データを一度読み込み、同じインスタンスを返す。
+
+        データが無い・壊れている・読めない場合は ``ConfigurationError`` を送出する。
+        """
+        return _load_packaged_cached()
+
+    @classmethod
     def load(cls, path: str | os.PathLike[str] | None = None) -> "PublicKnowledge":
-        """``save()`` した .pmk を読む。path 省略時は環境変数 PRIVACY_MASKER_KNOWLEDGE を使う。"""
+        """.pmk を明示の path → 環境変数 → 同梱データの順に読む。
+
+        path 省略時は ``PRIVACY_MASKER_KNOWLEDGE`` を使い、未設定または空なら
+        ``packaged()`` を返す。指定されたファイルを読めない場合は失敗する。
+        """
         if path is None:
             path = os.environ.get(ENV_VAR)
             if not path:
-                raise ConfigurationError(
-                    f"PublicKnowledge.load() requires a path or the {ENV_VAR} environment variable"
-                )
+                return cls.packaged()
         with open(path, "rb") as f:
             head = f.read(4 + _HEADER.size)
             if len(head) != 4 + _HEADER.size or head[:4] != _MAGIC:
@@ -137,3 +152,22 @@ class PublicKnowledge:
 
     def __repr__(self) -> str:
         return f"PublicKnowledge(entries={len(self._h)})"
+
+
+@lru_cache(maxsize=1)
+def _load_packaged_cached() -> PublicKnowledge:
+    try:
+        ref = resources.files("privacy_masker.data").joinpath(PACKAGED_KNOWLEDGE_NAME)
+        with resources.as_file(ref) as path:
+            knowledge = PublicKnowledge.load(path)
+            if path.stat().st_size != 4 + _HEADER.size + len(knowledge) * knowledge._h.itemsize:
+                raise ConfigurationError("invalid PublicKnowledge (.pmk) file size")
+            if any(knowledge._h[i - 1] >= knowledge._h[i] for i in range(1, len(knowledge))):
+                raise ConfigurationError("PublicKnowledge (.pmk) hashes must be sorted and unique")
+            return knowledge
+    except (OSError, ModuleNotFoundError, ConfigurationError, ValueError, OverflowError) as exc:
+        raise ConfigurationError(
+            f"同梱の公知データ {PACKAGED_KNOWLEDGE_NAME} を読み込めません: {exc}。"
+            "再インストールするか tools/build_knowledge.py で生成して "
+            "PublicKnowledge.load(path) に path を渡してください。"
+        ) from exc

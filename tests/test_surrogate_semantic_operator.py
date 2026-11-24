@@ -44,8 +44,11 @@ def test_facility_and_location_kinds():
     loc = Surrogate(kind="location", key=KEY)
     assert loc.apply("大分県", E("LOCATION", 3), Ctx()) in set(jp.REGION_BLOCKS["九州・沖縄"]) - {"大分県"}
     city = loc.apply("札幌市", E("LOCATION", 3), Ctx())
-    # PREF_CITIES_EXTRA（北海道の追加市。semantic 経路専用）も選択肢に入る
-    assert city != "札幌市" and any(city == c and p == "北海道" for p, c in jp.PREF_CITIES + jp.PREF_CITIES_EXTRA)
+    # 北海道の対応先は東北。市もその県に所属し、政令市が無ければ市になる。
+    from privacy_masker.data.municipalities import load_municipalities
+    pref = loc.apply("北海道", E("LOCATION", 3), Ctx())
+    assert pref in jp.REGION_BLOCKS["東北"]
+    assert load_municipalities().resolve(city, prefecture=pref).kind in ("市", "政令市")
     assert loc.apply("パリ", E("LOCATION", 2), Ctx()) in set(jp.FOREIGN_CITIES_KATA) - {"パリ"}
     assert loc.apply("日本", E("LOCATION", 2), Ctx()) in jp.COUNTRIES
 

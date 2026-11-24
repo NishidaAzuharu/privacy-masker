@@ -6,8 +6,7 @@
 既定のモデルは Hugging Face Hub で配布している本番モデル（privacy_masker.hub.DEFAULT_MODEL_ID。初回に取得してキャッシュ）。
 環境変数 PRIVACY_MASKER_MODEL か --model で差し替えられる（ローカルのフォルダか Hub のリポジトリ ID）。
 char_head.safetensors があるフォルダは CharHeadNerDetector、無ければ TransformersNerDetector で読む。
-standard レベル（4.）だけ公知データ .pmk が要る（PRIVACY_MASKER_KNOWLEDGE か、データフォルダ PRIVACY_MASKER_DRIVE_DIR 配下の
-jawiki_titles_ns0.pmk。無ければその段を飛ばす）。
+standard レベル（4.）は同梱の公知データを使う。PRIVACY_MASKER_KNOWLEDGE か --knowledge で差し替えられる。
 依存: pip install 'privacy-masker[transformers,crypto]'（vault の往復に crypto が要る。無ければその段だけ飛ばす）。
 """
 from __future__ import annotations
@@ -22,10 +21,7 @@ from privacy_masker.exceptions import ConfigurationError
 from privacy_masker.hub import DEFAULT_MODEL_ID, resolve_model_dir
 from privacy_masker.operators import Surrogate, Tokenize
 
-# 公知データ .pmk の置き場（standard レベル用）。環境変数 PRIVACY_MASKER_DRIVE_DIR で差し替える
-DATA_DIR = os.path.expanduser(os.environ.get("PRIVACY_MASKER_DRIVE_DIR", "~/privacy-masker-data"))
 DEFAULT_MODEL = os.environ.get("PRIVACY_MASKER_MODEL", DEFAULT_MODEL_ID)   # Hub の本番モデル（フォルダか Hub ID で差し替え可）
-DEFAULT_KNOWLEDGE = os.environ.get("PRIVACY_MASKER_KNOWLEDGE", f"{DATA_DIR}/jawiki_titles_ns0.pmk")
 KEY = b"quickstart-demo-key-please-rotate"   # デモ用。実運用では環境変数などから渡す
 
 DOC = (
@@ -63,7 +59,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("text", nargs="?", default=None, help="処理するテキスト（省略時はデモ文書）")
     ap.add_argument("--model", default=DEFAULT_MODEL, help="NER モデルのフォルダか Hugging Face Hub のリポジトリ ID（既定: 環境変数 PRIVACY_MASKER_MODEL、無ければ Hub の本番モデル）")
-    ap.add_argument("--knowledge", default=DEFAULT_KNOWLEDGE, help="standard レベル用の公知データ .pmk（無ければその段を飛ばす）")
+    ap.add_argument("--knowledge", default=None, help="standard レベル用の公知データ .pmk（省略時: PRIVACY_MASKER_KNOWLEDGE → 同梱データ）")
     args = ap.parse_args()
     doc = args.text or DOC
 
@@ -109,18 +105,15 @@ def main() -> None:
         print(f"--- restore() ---\n{back.text}   （復元 {back.restored} 件）")
 
     # 4. standard レベル: 公人・公知の地名/施設は残し、私人の情報だけ匿名化
-    hr("4. standard レベル（識別性ベース。公知データが要る）")
-    if not os.path.exists(args.knowledge):
-        print(f"公知データが無いので飛ばします: {args.knowledge}（tools/build_knowledge.py で生成）")
-    else:
-        knowledge = PublicKnowledge.load(args.knowledge)
-        policy_s = Policy.preset("standard")
-        policy_s.rules.update({"PERSON": Surrogate(kind="person", key=KEY),
-                               "ADDRESS": Surrogate(kind="address", key=KEY, keep="city")})
-        engine_s = PrivacyEngine(detectors=detectors, policy=policy_s,
-                                 annotators=[IdentifiabilityAnnotator(level="standard", knowledge=knowledge)])
-        doc_s = "安倍元総理は奈良市で演説し、田中さんは新宿駅で待った。"
-        show(engine_s.transform(doc_s), doc_s)
+    hr("4. standard レベル（識別性ベース。同梱の公知データを使用）")
+    knowledge = PublicKnowledge.load(args.knowledge)
+    policy_s = Policy.preset("standard")
+    policy_s.rules.update({"PERSON": Surrogate(kind="person", key=KEY),
+                           "ADDRESS": Surrogate(kind="address", key=KEY, keep="city")})
+    engine_s = PrivacyEngine(detectors=detectors, policy=policy_s,
+                             annotators=[IdentifiabilityAnnotator(level="standard", knowledge=knowledge)])
+    doc_s = "安倍元総理は奈良市で演説し、田中さんは新宿駅で待った。"
+    show(engine_s.transform(doc_s), doc_s)
 
     # 5. 検出だけ（自前の後処理をしたいとき）
     hr("5. detect()（変換せず検出結果だけ）")

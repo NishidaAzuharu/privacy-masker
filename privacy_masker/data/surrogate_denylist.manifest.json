@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-11-11T01:33:57",
+  "created_at": "2026-11-12T23:56:57",
   "generator": "tools/build_surrogate_denylist.py",
-  "knowledge_file": "jawiki_titles_ns0.pmk",
+  "knowledge_file": "public_knowledge_ja.pmk",
   "knowledge_sha256": "271d41788998c4bfdca6e385e0e0ab1ae76ea185b4ccec7032e7ba335df2d4a8",
   "knowledge_entries": 2821535,
   "service_cores": {
@@ -922,11 +922,11 @@
     "license": "CC BY-SA 4.0",
     "note": "見出し語との衝突分を 64bit ハッシュにしたもの。見出し語の本文は含まない"
   },
-  "candidates": 811135,
-  "hits": 15393,
-  "entries_written": 15393,
-  "pmk_entries": 15376,
-  "out_sha256": "2676190037ef3b4c6e0050668da59e690b8212eb9391e4209492b6e4b94318cd",
+  "candidates": 1625502,
+  "hits": 15400,
+  "entries_written": 15400,
+  "pmk_entries": 15383,
+  "out_sha256": "1a8a8c32a0008a65da5cf3876012b8d132e93ba8afd361e379680ae360cd014e",
   "sample_hits": [
     "AAA",
     "AAB",

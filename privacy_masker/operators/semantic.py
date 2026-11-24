@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import types
+import unicodedata
 from dataclasses import dataclass
 from typing import Callable, Mapping
 
@@ -15,6 +16,8 @@ from ..data.ja_pools import (
     COUNTRIES, COUNTRIES_EXTRA, COUNTRY_ALIASES, COUNTRY_CANONICAL, DEPT_FUNCTIONS, FOREIGN_CITIES_KANJI, FOREIGN_CITIES_KATA,
     GIVEN_HIRA, GIVEN_KANJI_F, GIVEN_KANJI_M, GIVEN_KATA, GIVEN_KATA_JA, GIVEN_ROMAJI, KATA_CORES, ORG_CORES,
     ORG_TYPE_WORDS, ORG_SERVICE_CORES, ORG_SERVICE_KATA_CORES,
+    FINANCE_TYPE_WORDS, FACILITY_TYPE_WORDS, FACILITY_TYPE_PREFIXES, FACILITY_AFFIXES, FACILITY_NUMBER_FORMS,
+    BUILDING_TYPE_WORDS, BUILDING_NUMBER_FORMS, BUILDING_B, TYPE_NUMBERS, DISTRICT_TYPE_WORDS,
     PREFECTURES, PREF_CITIES, PREF_CITIES_EXTRA, REGION_BLOCKS, SURNAMES_HIRA, SURNAMES_KANJI, SURNAMES_KATA_JA,
     SURNAMES_ROMAJI, TOWNS,
 )
@@ -112,7 +115,7 @@ class Features:
     legal_form: str | None = None          # LEGAL_FORMS のいずれか
     legal_form_pos: str | None = None      # pre / post
     # FACILITY
-    org_prefix: str | None = None          # 市立 / 県立 / 私立 / 町立
+    org_prefix: str | None = None          # FACILITY_TYPE_PREFIXES のいずれか
     # LOCATION / ADDRESS
     granularity: str | None = None         # LOCATION: カテゴリと同じ。ADDRESS: pref / city / town / banchi / building
     region_block: str | None = None        # REGION_BLOCKS のキー
@@ -121,11 +124,107 @@ class Features:
     chome_style: bool = False
     chome_kanji: bool = False              # 丁目が漢数字（一丁目）か
     fullwidth_digits: bool = False
-    type_word: str | None = None           # ORG_TYPE_WORDS[category] のいずれか（末尾の種別だけ）
+    type_word: str | None = None           # kind ごとの閉じた保存語彙
+    affix: str = ""                        # 定型付随語または数値テンプレート
+    excluded_number: int | None = None     # TYPE_NUMBERS 内の元の数字だけを除外する
+    affix_fullwidth: bool = False
+    building_position: str = "post"        # pre / post（種別語の位置）
+    building_separator: str = ""           # 番地と建物の間
+    number_separator: str = ""             # 建物と階・号室の間
 
     def __post_init__(self) -> None:
-        if self.type_word is not None and (self.kind != "org" or self.type_word not in ORG_TYPE_WORDS.get(self.category, ())):
+        if self.kind == "org":
+            words = FINANCE_TYPE_WORDS if self.category == "finance" else ORG_TYPE_WORDS.get(self.category, ())
+        elif self.kind == "facility":
+            words = tuple(w for ws in FACILITY_TYPE_WORDS.values() for w in ws)
+        elif self.kind == "location" and self.category == "district":
+            words = DISTRICT_TYPE_WORDS
+        else:
+            words = BUILDING_TYPE_WORDS if self.kind == "address" else ()
+        if self.type_word is not None and self.type_word not in words:
             raise ValueError("type_word must belong to the category's closed vocabulary")
+        forms = ()
+        if self.kind == "facility":
+            forms = FACILITY_AFFIXES + FACILITY_NUMBER_FORMS
+        elif self.kind == "address":
+            forms = BUILDING_NUMBER_FORMS
+        if self.affix not in ("",) + forms:
+            raise ValueError("affix must belong to the closed vocabulary")
+        if self.excluded_number is not None and self.excluded_number not in TYPE_NUMBERS:
+            raise ValueError("excluded_number must belong to the closed vocabulary")
+        if self.org_prefix is not None and self.org_prefix not in FACILITY_TYPE_PREFIXES:
+            raise ValueError("org_prefix must belong to the closed vocabulary")
+        if self.building_position not in ("pre", "post") or any(
+            sep not in ("", " ", "\u3000") for sep in (self.building_separator, self.number_separator)
+        ):
+            raise ValueError("building format must belong to the closed vocabulary")
+
+
+def _terminal_type(n: str, words: tuple[str, ...]) -> str | None:
+    for word in sorted(words, key=len, reverse=True):
+        if n.endswith(word):
+            return word if len(n) > len(word) else None
+    return None
+
+
+def _split_affix(n: str, forms: tuple[str, ...], fixed: tuple[str, ...] = ()) -> tuple[str, dict]:
+    for word in fixed:
+        if n.endswith(word):
+            return n[:-len(word)], {"affix": word}
+    for form in sorted(forms, key=len, reverse=True):
+        rx = re.escape(form).replace(re.escape("{}"), r"([0-9０-９]+)")
+        m = re.search(rx + r"$", n)
+        if m:
+            # 長大な入力数字を int に渡さず、閉じた候補との一致だけを調べる。
+            digits = unicodedata.normalize("NFKC", m[1]).lstrip("0")
+            excluded = next((i for i in TYPE_NUMBERS if str(i) == digits), None)
+            return n[:m.start()], {"affix": form, "excluded_number": excluded,
+                                   "affix_fullwidth": bool(_FULLWIDTH_DIGIT_RE.search(m[1]))}
+    return n, {}
+
+
+def facility_shape(n: str) -> tuple[str | None, str, dict]:
+    body, attrs = _split_affix(n, FACILITY_NUMBER_FORMS, FACILITY_AFFIXES)
+    words = tuple(w for ws in FACILITY_TYPE_WORDS.values() for w in ws)
+    word = _terminal_type(body, words)
+    if word is None:
+        return None, n, {}
+    core = body[:-len(word)]
+    prefix = next((p for p in FACILITY_TYPE_PREFIXES if core.startswith(p)), None)
+    if prefix and word in FACILITY_TYPE_WORDS["education"]:
+        core = core[len(prefix):]
+        attrs["org_prefix"] = prefix
+    return (word, core, attrs) if core else (None, n, {})
+
+
+def _address_building_tail(raw: str) -> str:
+    # 号室・号館・号棟の数字を番地として読み飛ばさない。
+    unit = r"(?:丁目|番地?|号(?!室|館|棟)|[-－])"
+    m = re.search(r"[0-9０-９一二三四五六七八九十]+" + unit + r"[0-9０-９]*(?:" + unit + r"[0-9０-９]*)*", raw)
+    return raw[m.end():] if m else raw
+
+
+def address_building_shape(raw: str) -> tuple[str | None, str, dict]:
+    """番地の後ろを保守的に解析。返す core は安全フィルタ専用で Features には渡さない。"""
+    tail = _address_building_tail(raw)
+    gap = "\u3000" if tail.startswith("\u3000") else " " if tail.startswith(" ") else ""
+    body, attrs = _split_affix(tail.strip(), BUILDING_NUMBER_FORMS)
+    number_gap = "\u3000" if body.endswith("\u3000") else " " if body.endswith(" ") else ""
+    body = body.rstrip()
+    word = _terminal_type(body, BUILDING_TYPE_WORDS)
+    pos = "post"
+    if word:
+        core = body[:-len(word)]
+    else:
+        word = next((w for w in sorted(BUILDING_TYPE_WORDS, key=len, reverse=True)
+                     if body.startswith(w) and len(body) > len(w)), None)
+        core = body[len(word):] if word else ""
+        pos = "pre"
+    # 数字や未知の末尾は形式保存せず従来経路へ。
+    if not word or not re.fullmatch(r"[一-龥々ぁ-ゖァ-ヶーA-Za-z]+", core):
+        return None, "", {}
+    attrs.update(building_position=pos, building_separator=gap, number_separator=number_gap)
+    return word, core, attrs
 
 
 def _script_of(norm: str, raw: str) -> str:
@@ -198,28 +297,32 @@ def address_granularity(n: str) -> str:
     return "town"
 
 
-def address_city_and_town(n: str) -> tuple[str | None, str | None]:
+def address_city_and_town(n: str, *, city_prefix: str | None = None) -> tuple[str | None, str | None]:
     """(都道府県込みの市区町村, 番地・建物より手前の町名) を抽出する。市区町村が特定できなければ
     (None, None)。avoid_parts（生成された偽住所に元の市区町村・町名が混入するのを防ぐ）と、
     surrogate.py の keep="city" の分解で使う。city が本当に市区町村かは is_municipality() で別に判定する。"""
-    m = _ADDR_CITY_ONLY_RE.match(n)
-    if not m:
-        return None, None
-    city = m.group("city")
-    rest = m.group("rest")
-    # 「四日市市」のように市区町村名の途中に 市/区/町/村 を含むと非貪欲一致が 1 字手前で切れる。
-    # MUNICIPALITIES_WITH_INNER_SHI の名前で終わるようになるときだけ 1 字取り込む（市谷加賀町などの町名は取り込まない）。
-    # 語彙の文字列末尾一致だけでは境界を見ないため、「野田村市場」のように別の町名の内部にたまたま
-    # 「田村市」が現れると誤って取り込んでいた（最終レビューの残件2）。語彙の直前が文字列の先頭、または
-    # 都/道/府/県/郡 の1字のときだけ延長する
-    if rest:
-        cand = city + rest[0]
-        for m2 in MUNICIPALITIES_WITH_INNER_SHI:
-            if cand.endswith(m2):
-                head = cand[: -len(m2)]
-                if head == "" or head[-1] in "都道府県郡":
-                    city, rest = cand, rest[1:]
-                break
+    # semantic の一覧で境界が確定した場合だけ指定する。既定の旧互換分解は維持する。
+    if city_prefix is not None:
+        city, rest = city_prefix, n[len(city_prefix):]
+    else:
+        m = _ADDR_CITY_ONLY_RE.match(n)
+        if not m:
+            return None, None
+        city = m.group("city")
+        rest = m.group("rest")
+        # 「四日市市」のように市区町村名の途中に 市/区/町/村 を含むと非貪欲一致が 1 字手前で切れる。
+        # MUNICIPALITIES_WITH_INNER_SHI の名前で終わるようになるときだけ 1 字取り込む（市谷加賀町などの町名は取り込まない）。
+        # 語彙の文字列末尾一致だけでは境界を見ないため、「野田村市場」のように別の町名の内部にたまたま
+        # 「田村市」が現れると誤って取り込んでいた（最終レビューの残件2）。語彙の直前が文字列の先頭、または
+        # 都/道/府/県/郡 の1字のときだけ延長する
+        if rest:
+            cand = city + rest[0]
+            for m2 in MUNICIPALITIES_WITH_INNER_SHI:
+                if cand.endswith(m2):
+                    head = cand[: -len(m2)]
+                    if head == "" or head[-1] in "都道府県郡":
+                        city, rest = cand, rest[1:]
+                    break
     d = _DIGIT_RE.search(rest)
     b = HAS_BUILDING_RE.search(rest)
     ends = [x.start() for x in (d, b) if x]
@@ -313,12 +416,12 @@ class RuleCategorizer:
         ("media", re.compile(r"(新聞社|新聞|放送局|放送|出版|テレビ|通信社|(?<!電気)通信|ラジオ|テレビ局|ラジオ局|巨人軍|球団|"
                              r"ホークス|ジャイアンツ|タイガース|ドラゴンズ|スワローズ|ベイスターズ|カープ|マリーンズ|ライオンズ|バファローズ|ファイターズ|イーグルス)$")),
         ("party", re.compile(r"(党|政治連盟|政治協会)$")),
-        ("association", re.compile(r"(協会|連盟|組合|財団|研究会|振興会|学会|NPO法人|連合会|の会)$")),
+        ("association", re.compile(r"(協会|連盟|(?<!信用)組合|財団|研究会|振興会|学会|NPO法人|連合会|の会)$")),
         ("department", re.compile(r"^[^株合有]{1,8}(部|課|室|チーム|係|委員会)$")),
         ("transport", re.compile(r"(運輸|物流|交通|商船|海運|航空|鉄道|電鉄|電気鉄道|電気軌道|バス|エクスプレス|倉庫)")),
         ("manufacturing", re.compile(r"(電機|電子|製作所|工業|化学|精機|精工|金属|製薬|薬品|食品|製造|重工|鉄鋼|機械)")),
         ("it", re.compile(r"(システム|テクノロジー|ソフト|ネットワーク|デジタル|データ|コンピュータ|IT|電気通信|テレコム)")),
-        ("finance", re.compile(r"(銀行|信用金庫|信金|信用組合|証券|保険|ファイナンス|リース|カード|キャピタル)")),
+        ("finance", re.compile(r"(銀行|信用金庫|信金|信用組合|証券|證券|保険|ファイナンス|リース|カード|キャピタル)")),
         ("retail", re.compile(r"(商店|ストア|マート|百貨店|フーズ|物産|販売|ドラッグ|スーパー)")),
         ("construction", re.compile(r"(建設|工務店|不動産|ハウジング|建築|土木|住宅)")),
     )
@@ -409,10 +512,10 @@ class RuleCategorizer:
         人事院のような機関名全体しか一致しない場合や、分類ヘッドだけの判定は保存しない。
         値は定数から返し、原文の断片を Features に渡さない。
         """
-        if category not in ORG_TYPE_WORDS or cls.categorize("org", norm) != category:
+        if category not in (*ORG_TYPE_WORDS, "finance") or cls.categorize("org", norm) != category:
             return None
         rest = split_legal_form(norm)[2]
-        for word in sorted(ORG_TYPE_WORDS[category], key=len, reverse=True):
+        for word in sorted(FINANCE_TYPE_WORDS if category == "finance" else ORG_TYPE_WORDS[category], key=len, reverse=True):
             if rest.endswith(word):
                 return word if len(rest) > len(word) else None
         return None
@@ -502,17 +605,23 @@ def extract_features(kind: str, value: str, norm: str, category: str, *, keep: s
         return Features(kind, category, _script_of(rest, raw), length, legal_form=form, legal_form_pos=pos,
                         type_word=RuleCategorizer.org_type_word(n, category))
     if kind == "facility":
-        org_prefix = next((p for p in ("市立", "県立", "私立", "町立") if n.startswith(p)), None)
-        return Features(kind, category, script, length, org_prefix=org_prefix)
+        word, _core, attrs = facility_shape(n)
+        if not word:
+            attrs["org_prefix"] = next((p for p in ("市立", "県立", "私立", "町立") if n.startswith(p)), None)
+        if attrs.get("affix") in FACILITY_NUMBER_FORMS:
+            attrs["affix_fullwidth"] = bool(_FULLWIDTH_DIGIT_RE.search(raw))
+        return Features(kind, category, script, length, type_word=word, **attrs)
     if kind == "location":
         return Features(kind, category, script, length, granularity=category, region_block=region_block_of(n),
+                        type_word=_terminal_type(n, DISTRICT_TYPE_WORDS) if category == "district" else None,
                         chome_style="丁目" in n, chome_kanji=bool(_CHOME_KANJI_RE.search(n)))
     if kind == "address":
         gran = address_granularity(n)
+        word, _core, attrs = address_building_shape(raw)
         return Features(kind, "address", script, length, granularity=gran, region_block=region_block_of(n), keep=keep,
                         has_building=bool(HAS_BUILDING_RE.search(n)), chome_style="丁目" in n,
                         chome_kanji=bool(_CHOME_KANJI_RE.search(n)),
-                        fullwidth_digits=bool(_FULLWIDTH_DIGIT_RE.search(raw)))
+                        fullwidth_digits=bool(_FULLWIDTH_DIGIT_RE.search(raw)), type_word=word, **attrs)
     raise ValueError(f"unknown kind: {kind!r}")
 
 
@@ -617,8 +726,14 @@ def avoid_parts(kind: str, norm: str) -> tuple[str, ...]:
         start = RuleCategorizer.core_split(kind, rest)
         if start is not None:
             core = rest[:start]
+        if kind == "facility":
+            word, typed_core, _attrs = facility_shape(n)
+            if word:
+                core = split_legal_form(typed_core)[2]
         parts = [core] if len(core) >= 2 and core != n else ([n] if len(n) >= 2 else [])
-        if kind == "org" and RuleCategorizer.categorize("org", n) in ORG_TYPE_WORDS:
+        if kind == "facility" and word and core not in parts:
+            parts.append(core)
+        if kind == "org" and RuleCategorizer.categorize("org", n) in (*ORG_TYPE_WORDS, "finance"):
             # 種別語を保存する経路では1文字のコアも避ける（例: 衆 + 議院）。
             if core and core != rest and core not in parts:
                 parts.append(core)
@@ -628,12 +743,19 @@ def avoid_parts(kind: str, norm: str) -> tuple[str, ...]:
         # 部分文字列として埋もれていても個別には避けられなかった（「中央青葉人事委員会」→ コア「中央青葉」の
         # 内部の「青葉」、「汐見町議会」→ コア「汐見町」の内部の「汐見」）。rest に含まれる語彙語も避ける
         # 最終修正波: ORG は department の機能名（DEPT_FUNCTIONS）も避ける（_ORG_FAKE_VOCAB の注釈）
-        parts.extend(w for w in _vocab_parts(rest, _ORG_FAKE_VOCAB if kind == "org" else _FAKE_CORE_VOCAB) if w not in parts)
+        # 保存した付随語（中央口など）を固有部分として禁止しない。
+        vocab_source = core if kind == "facility" and word else rest
+        parts.extend(w for w in _vocab_parts(vocab_source, _ORG_FAKE_VOCAB if kind == "org" else _FAKE_CORE_VOCAB) if w not in parts)
         seen: set[str] = set()
         return tuple(p for p in parts if not (p in seen or seen.add(p)))
     if kind == "address":
         city, town = address_city_and_town(n)
-        return tuple(p for p in (city, town) if p and len(p) >= 2)
+        word, core, _attrs = address_building_shape(n)
+        building_parts = (core, *_vocab_parts(core)) if word else ()
+        if HAS_BUILDING_RE.search(n):
+            # 形式を保存できないときも、従来の建物プールの固有部分を再利用しない。
+            building_parts += _vocab_parts(_address_building_tail(n), KATA_CORES + BUILDING_B)
+        return tuple(p for p in (city, town) if p and len(p) >= 2) + tuple(p for p in building_parts if p)
     if kind == "location":
         parts = []
         if len(n) >= 2:
@@ -648,6 +770,9 @@ def avoid_parts(kind: str, norm: str) -> tuple[str, ...]:
             m = rx.search(n)
             if m and m.end() == len(n) and m.start() >= 2:
                 parts.append(n[:m.start()])
+        word = _terminal_type(n, DISTRICT_TYPE_WORDS)
+        if word and len(n) == len(word) + 1 and RuleCategorizer.categorize(kind, n) == "district":
+            parts.append(n[:-len(word)])
         # fix round 1（Important I1）: 国名の別名・略称・前身国家は、同じ国の標準名（偽名のプール COUNTRIES の項目）も避ける
         canon = COUNTRY_CANONICAL.get(n)
         if canon:

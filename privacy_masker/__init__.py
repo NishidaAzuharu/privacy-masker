@@ -3,6 +3,7 @@
 from . import entity_types, exceptions
 from .annotators import IdentifiabilityAnnotator, PublicKnowledge
 from .category_head import HeadCategorizer
+from .person_role_head import PersonRoleHead
 from .engine import PrivacyEngine
 from .enhancer import ContextEnhancer
 from .policy import Policy
@@ -23,6 +24,7 @@ __all__ = [
     "IdentifiabilityAnnotator",
     "PublicKnowledge",
     "HeadCategorizer",
+    "PersonRoleHead",
     "Entity",
     "ExplainedEntity",
     "TransformResult",

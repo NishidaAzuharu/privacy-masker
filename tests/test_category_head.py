@@ -339,3 +339,33 @@ def test_input_dim_only_checked_for_divisibility_by_3_without_config_json(tmp_pa
     cfg["features"] = "span_ctx"
     (tmp_path / CATEGORY_HEAD_CONFIG).write_text(json.dumps(cfg), encoding="utf-8")
     assert HeadCategorizer.load(str(tmp_path)).features == "span_ctx"
+
+
+@pytest.mark.parametrize("head_type", ["linear", "mlp"])
+def test_span_mean_head_accepts_first_section_of_span_ctx(tmp_path, head_type):
+    if head_type == "linear":
+        _write_head(tmp_path)
+    else:
+        _write_mlp_head(tmp_path)
+    head = HeadCategorizer.load(str(tmp_path))
+    mean = _vec(1, 0, 0, 0)
+    context = mean + _vec(-10, 10, 20, 30, 40, 50, 60, 70)
+    assert head("org", context) == head("org", mean)
+    assert head("org", context)[0] != "service"
+
+
+def test_linear_preserves_existing_float64_precision(tmp_path):
+    _write_head(tmp_path)
+    weight = np.zeros((2, 4), dtype="float64")
+    weight[0, 0] = 1.0 + 1e-10
+    weight[1, 0] = 1.0
+    st = pytest.importorskip("safetensors.numpy")
+    st.save_file({"org.weight": weight, "org.bias": np.zeros(2, dtype="float64")},
+                 str(tmp_path / CATEGORY_HEAD_WEIGHTS))
+    head = HeadCategorizer.load(str(tmp_path))
+    assert head("org", _vec(1, 0, 0, 0))[1] > 0
+
+
+def test_direct_empty_linear_head_still_falls_back():
+    head = HeadCategorizer({"org": ([], [])}, {"org": []}, {"org": 0.2})
+    assert head("org", _vec(1, 0)) == ("service", 0.0)

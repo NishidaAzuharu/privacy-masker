@@ -17,8 +17,7 @@ char_head.safetensors が無いフォルダは `TransformersNerDetector`（token
 
 ■ 公知データ（3. standard レベルだけ必要）
 
-環境変数 PRIVACY_MASKER_KNOWLEDGE か、データフォルダ PRIVACY_MASKER_DRIVE_DIR 配下の jawiki_titles_ns0.pmk を読みます
-（tools/build_knowledge.py で生成）。無ければ 3. を飛ばします。
+PublicKnowledge.load() で同梱の公知データを読みます。環境変数 PRIVACY_MASKER_KNOWLEDGE で差し替えられます。
 
 ■ Refiner（スパン境界の補正）
 
@@ -45,10 +44,7 @@ from privacy_masker.operators import (
 # ---------------------------------------------------------------------------
 # 設定
 # ---------------------------------------------------------------------------
-# 公知データ .pmk の置き場。環境変数 PRIVACY_MASKER_DRIVE_DIR で差し替える
-DATA_DIR = os.path.expanduser(os.environ.get("PRIVACY_MASKER_DRIVE_DIR", "~/privacy-masker-data"))
 MODEL = os.environ.get("PRIVACY_MASKER_MODEL", DEFAULT_MODEL_ID)   # Hub の本番モデル（フォルダか Hub ID で差し替え可）
-KNOWLEDGE = os.environ.get("PRIVACY_MASKER_KNOWLEDGE", f"{DATA_DIR}/jawiki_titles_ns0.pmk")   # standard レベル用（Wikipedia 見出し語）
 
 SECRET_KEY = b"demo-secret-key-please-rotate-in-production"   # 本番は環境変数や秘密管理から
 ENCRYPT_KEY = Encrypt.generate_key()                          # 本番は保管して再利用（毎回変えると復号できない）
@@ -141,12 +137,8 @@ def demo2_surrogate(detectors) -> None:
 # 3. 識別性ベース（公人・公知の施設は残し、私人に紐づく情報だけ匿名化）
 # ---------------------------------------------------------------------------
 def demo3_standard(detectors) -> None:
-    if not os.path.exists(KNOWLEDGE):
-        print(f"\n[3 をスキップ] 公知データが無い: {KNOWLEDGE}\n"
-              f"  作り方: PYTHONPATH=. .venv/bin/python tools/build_knowledge.py")
-        return
     print("\n  [公知データ] 読み込み中…", end="", flush=True)
-    knowledge = PublicKnowledge.load(KNOWLEDGE)
+    knowledge = PublicKnowledge.load()
     print(f" {len(knowledge):,} 件")
     engine = PrivacyEngine(
         detectors=detectors,

@@ -117,11 +117,12 @@ def test_C_granularity_and_region_block_preserved():
         out = loc.apply(pref, E_LOC, Ctx(b"k"))
         expected_block = "東北" if pref == "北海道" else sm.region_block_of(pref)      # 北海道だけ東北で代替
         assert out != pref and sm.region_block_of(out) == expected_block, (pref, out)
-    # PREF_CITIES_EXTRA（北海道の追加市。semantic 経路専用）も選択肢に入る
-    known_cities = {c for _, c in jp.PREF_CITIES + jp.PREF_CITIES_EXTRA}
+    from privacy_masker.data.municipalities import load_municipalities
+    data = load_municipalities()
     for pref, city in jp.PREF_CITIES:
-        out = loc.apply(city, Entity("LOCATION", 0, len(city), 1.0), Ctx(b"k"))
-        assert out != city and out in known_cities and sm.region_block_of(out) == sm.region_block_of(pref), (city, out)
+        out = loc.apply(city, Entity("LOCATION", 0, len(city), 1.0), Ctx(b"k", text=pref))
+        target_pref = loc.apply(pref, E_LOC, Ctx(b"k", text=pref))
+        assert out != city and data.resolve(out, prefecture=target_pref) is not None, (city, out)
     fac = Surrogate(kind="facility", key=b"k")
     assert fac.apply("大江戸記念病院", E_FAC, Ctx(b"k")).endswith(jp.FACILITY_WORDS["medical"])
     assert fac.apply("神楽坂第一小学校", E_FAC, Ctx(b"k")).endswith(jp.FACILITY_WORDS["education"])

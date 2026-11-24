@@ -66,6 +66,58 @@ print(engine.transform("山田太郎さんは株式会社ABCに勤務してお�
 | 規約 | ADDRESS は番地あり、LOCATION は番地なし。敬称・肩書きはスパン外。電話・メール・郵便番号・日付は対象外（privacy-masker の正規表現が担当） |
 | ファイル | `model.safetensors`（encoder）、`char_head.safetensors` + `char_head_config.json`（文字ヘッド）、`config.json`、`tokenizer.json`、`tokenizer_config.json`、`privacy_masker_model.json`（由来と SHA-256） |
 
+<!-- person_role_head:start -->
+## 人名の役割ヘッド（任意）
+
+`person_role_head.json` / `person_role_head.safetensors` は、文中の人名が「公人としての言及」か
+「私人としての言及」かを、前後の文脈から判定する小さなヘッドです。
+privacy-masker の `standard` レベルで、公知データに一致した人名を私人としての言及と判定したら
+残さないための任意機能です。**拒否だけに使い、既定では使いません**。ヘッドだけで公人として保持することはなく、
+公職の肩書きによる判定には適用しません。
+
+```python
+from privacy_masker import IdentifiabilityAnnotator, MorphologicalRefiner, PrivacyEngine, Policy, PublicKnowledge
+from privacy_masker.detectors import CharHeadNerDetector, RegexDetector
+
+ner = CharHeadNerDetector(model="$repo_id")
+annotator = IdentifiabilityAnnotator(
+    knowledge=PublicKnowledge.load(), person_role=ner.person_role_head,
+    # person_role_threshold=0.8,  # 閾値を上書きする場合（0〜1）
+)
+engine = PrivacyEngine(
+    detectors=[ner, RegexDetector.default_ja()], refiner=MorphologicalRefiner(),
+    annotators=[annotator], policy=Policy.preset("standard"),
+)
+```
+
+公人としての言及の確率が閾値 **$person_role_threshold** 未満なら、公知データによる保持を取り消します。
+`IdentifiabilityAnnotator` の `person_role_threshold` で上書きでき、省略時はヘッドの `threshold` を使います。
+確率が閾値ちょうどなら保持候補のままです。ベクトルが無い場合や判定不能の場合も保持を取り消します。
+検出器は同梱されたヘッドを自動で読み込みますが、上の例のようにアノテータに渡したときだけ拒否判定が有効になります。
+`span_vectors=True`（既定）が必要です。
+
+役割ヘッドは、次のデータでエンコーダを凍結し、ヘッドだけを学習しました。
+
+- 役割のラベルを付けた文章のひな形を大規模言語モデル（OpenAI の gpt-6.1-terra）で生成し、役割と無関係に選んだ名前を差し込んだ合成文。
+- NER の学習データの人名（報道・百科事典に由来する文の人名を公人、合成した私人文書の人名を私人とする弱いラベル）。
+
+生成したひな形・学習データは配布しません。以下の「学習データ」は NER 本体についての説明です。
+役割ヘッドの重みと設定にも「ライセンスと帰属」の重み・設定ファイルのライセンスが適用されます。
+
+閾値 0.8 で、検出から判定まで通して測った結果です。数字は公人として残した人名の件数です。
+
+| 文書 | 人名 | 規則だけ | ヘッドあり |
+|---|---|---|---|
+| 私人の文書の人名を、見出し語と一致する一般的な姓名に差し替え | 152 | 152 | 1 |
+| 私人の文書の人名を、著名人の名前に差し替え | 152 | 152 | 3 |
+| 報道の文（公知データに一致する公人 40 件を含む） | 62 | 40 | 37 |
+
+学習に使っていないひな形と名前の合成文では、閾値 0.8 のとき、私人としての言及を公人と判定する割合が 0.75%、公人としての言及を残す割合が 85.7% でした。
+上の文書は開発中の確認にも使ったもので、件数も小さいため、目安として見てください。
+
+文脈からの推定であり、判定は誤ることがあります。短い文・文脈が乏しい言及は私人側に倒れやすく、公人を隠すことがあります。
+
+<!-- person_role_head:end -->
 ## 学習データ
 
 Wikipedia 由来の固有表現データ（[`stockmark/ner-wikipedia-dataset`](https://huggingface.co/datasets/stockmark/ner-wikipedia-dataset)、CC BY-SA 3.0）、

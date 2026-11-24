@@ -213,6 +213,9 @@ def test_features_never_contain_original_strings():
         | set(jp.SCHOOL_PREFIXES) | {"", " ", "・", "short", "medium", "long", "pre", "post", "city", None} \
         | {c for cats in sm.CATEGORIES.values() for c in cats} | {"country", "prefecture", "city", "town", "district", "foreign", "nature", "other",
                                                                   "pref", "banchi", "building", "person", "org", "facility", "location", "address"}
+    allowed |= set(jp.FINANCE_TYPE_WORDS) | set(jp.FACILITY_TYPE_PREFIXES) | set(jp.FACILITY_AFFIXES) \
+        | set(jp.FACILITY_NUMBER_FORMS) | set(jp.BUILDING_NUMBER_FORMS) | set(jp.BUILDING_TYPE_WORDS) \
+        | set(jp.DISTRICT_TYPE_WORDS) | {w for ws in jp.FACILITY_TYPE_WORDS.values() for w in ws} | {"\u3000"}
     for kind, value, cat in [("person", "勘解由小路 麗華", "person"), ("org", "株式会社大江戸精密", "manufacturing"),
                              ("facility", "県立神楽坂高等学校", "education"), ("location", "和歌山県", "prefecture"),
                              ("address", "大阪府堺市北区百舌鳥町9-9-9", "address")]:
@@ -546,7 +549,8 @@ def test_avoid_parts_org_facility_equals_the_old_loop():
         for kind in ("org", "facility"):
             old = _old_avoid_parts_org_facility(kind, n)
             got = sm.avoid_parts(kind, n)
-            if kind == "org" and sm.RuleCategorizer.categorize(kind, sm.split_legal_form(n)[2]) in jp.ORG_TYPE_WORDS:
+            if (kind == "org" and sm.RuleCategorizer.categorize(kind, sm.split_legal_form(n)[2]) in (*jp.ORG_TYPE_WORDS, "finance")) or (
+                kind == "facility" and sm.facility_shape(n)[0] is not None):
                 # 保存対象は最長種別語の前がコア。短く切る場合も旧コアを含む候補を拒否できる。
                 assert all(any(p in previous for p in got) for previous in old), (kind, value, got, old)
             else:

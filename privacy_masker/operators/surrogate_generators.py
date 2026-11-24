@@ -14,6 +14,8 @@ from itertools import product
 from typing import Iterator
 
 from ..data.ja_pools import (
+    FINANCE_TYPE_WORDS, FACILITY_TYPE_WORDS, FACILITY_TYPE_PREFIXES, FACILITY_AFFIXES, FACILITY_NUMBER_FORMS,
+    BUILDING_TYPE_WORDS, BUILDING_NUMBER_FORMS, TYPE_NUMBERS, DISTRICT_TYPE_WORDS,
     BUILDING_A, BUILDING_B, COUNTRIES, DEPT_FUNCTIONS, DEPT_UNITS, DISTRICT_WORDS, FACILITY_WORDS, FOREIGN_CITIES_KATA,
     GIVEN_HIRA, GIVEN_KANJI, GIVEN_KANJI_F, GIVEN_KANJI_M, GIVEN_KATA, GIVEN_KATA_JA, GIVEN_ROMAJI, KATA_CORES,
     NATURE_WORDS, NICKNAMES_KATA, ORG_ASSOCIATION_WORDS, ORG_CORES, ORG_DIRECTIONS, ORG_GOV_WORDS, ORG_INDUSTRIES,
@@ -120,6 +122,9 @@ def gen_org(f: Features, rng: random.Random, *, neutral_service: bool = True) ->
         core = rng.choice(cores)
         suffix = rng.choice(ORG_SERVICE_SUFFIXES if f.legal_form is not None else ORG_SERVICE_SUFFIXES[1:])
         return _with_legal_form(core + suffix, f)
+    if cat == "finance" and f.type_word:
+        core = rng.choice(ORG_DIRECTIONS) + rng.choice(ORG_CORES)
+        return _with_legal_form(core + f.type_word, f)
     if cat in ORG_TYPE_WORDS:
         # 固有の地名は使わず、中立な組み合わせ式造語を使う。
         core = rng.choice(ORG_SERVICE_KATA_CORES if f.script == "kata" else ORG_SERVICE_CORES)
@@ -151,7 +156,26 @@ def _core(f: Features, rng: random.Random) -> str:
     return rng.choice(KATA_CORES) if f.script == "kata" else rng.choice(ORG_CORES)
 
 
+def _affix(f: Features, rng: random.Random) -> str:
+    if "{}" not in f.affix:
+        return f.affix
+    number = rng.choice(tuple(i for i in TYPE_NUMBERS if i != f.excluded_number))
+    suffix = f.affix.format(number)
+    return suffix.translate(_TO_FULLWIDTH) if f.affix_fullwidth else suffix
+
+
+def gen_building(f: Features, rng: random.Random) -> str:
+    core = rng.choice(KATA_CORES)
+    name = f.type_word + core if f.building_position == "pre" else core + f.type_word
+    return name + f.number_separator + _affix(f, rng)
+
+
 def gen_facility(f: Features, rng: random.Random) -> str:
+    if f.type_word:
+        kata_only = f.type_word in FACILITY_TYPE_WORDS["commerce"] + FACILITY_TYPE_WORDS["building"]
+        core = rng.choice(KATA_CORES) if kata_only else _core(f, rng)
+        prefix = (f.org_prefix or "") if f.type_word in FACILITY_TYPE_WORDS["education"] else ""
+        return prefix + core + f.type_word + _affix(f, rng)
     cat = f.category if f.category in FACILITY_WORDS else "other"
     word = rng.choice(FACILITY_WORDS[cat])
     if cat == "education" and word in _SCHOOL_WORDS:
@@ -178,6 +202,9 @@ def gen_location(f: Features, rng: random.Random) -> str:
     if g == "town":
         return rng.choice(TOWNS) + _chome(f, rng)
     if g == "district":
+        if f.type_word:
+            cores = ORG_CORES if f.type_word == "駅前" else TOWNS
+            return rng.choice(cores) + f.type_word
         return rng.choice(TOWNS) + rng.choice(DISTRICT_WORDS)
     if g == "foreign":
         return rng.choice(FOREIGN_CITIES_KATA)
@@ -215,7 +242,10 @@ def gen_address(f: Features, rng: random.Random) -> str:
     num = f"{c_disp}丁目{b}番{g}号" if f.chome_style else f"{c}-{b}-{g}"
     addr = f"{pref}{city}{town}{num}"
     if f.has_building:
-        addr += rng.choice(BUILDING_A) + rng.choice(BUILDING_B) + f"{rng.randint(2, 12)}0{rng.randint(1, 9)}号室"
+        if f.type_word:
+            addr += f.building_separator + gen_building(f, rng)
+        else:
+            addr += rng.choice(BUILDING_A) + rng.choice(BUILDING_B) + f"{rng.randint(2, 12)}0{rng.randint(1, 9)}号室"
     return addr.translate(_TO_FULLWIDTH) if f.fullwidth_digits else addr
 
 
@@ -227,7 +257,11 @@ def generate(f: Features, rng: random.Random) -> str:
 
 
 def enumerate_candidates() -> Iterator[str]:
-    """禁止リスト作成用: 生成器が出しうる架空の名前をすべて列挙する（ADDRESS と実在地名は含めない）。"""
+    """禁止リスト作成用: 架空の名前を列挙する（住所全体と実在地名は除き、架空の建物は含む）。
+
+    surrogate_geo が市区町村から連動生成する役所・駅は実在名を許容する別経路であり、
+    列挙対象には追加しない。同じ名前が通常の架空テンプレートからも出る場合は列挙・照合する。
+    """
     # PERSON
     for sei in SURNAMES_KANJI:
         yield sei
@@ -297,3 +331,23 @@ def enumerate_candidates() -> Iterator[str]:
     for t, w in product(TOWNS, DISTRICT_WORDS):
         yield t + w
         yield t
+
+    # semantic の保存語彙。付随表現を含む名前全体と住所の建物部分も照合する。
+    for d, core, word in product(ORG_DIRECTIONS, ORG_CORES, FINANCE_TYPE_WORDS):
+        yield from _yield_org_forms(d + core + word)
+    suffixes = ("",) + FACILITY_AFFIXES + tuple(form.format(i) for form in FACILITY_NUMBER_FORMS for i in TYPE_NUMBERS)
+    for category, words in FACILITY_TYPE_WORDS.items():
+        prefixes = ("",) + FACILITY_TYPE_PREFIXES if category == "education" else ("",)
+        for prefix, core, word, suffix in product(prefixes, ORG_CORES + KATA_CORES, words, suffixes):
+            name = prefix + core + word + suffix
+            yield name
+            yield name.translate(_TO_FULLWIDTH)
+    for core, word, pos, gap, suffix in product(
+        KATA_CORES, BUILDING_TYPE_WORDS, ("pre", "post"), ("", " ", "\u3000"),
+        ("",) + tuple(form.format(i) for form in BUILDING_NUMBER_FORMS for i in TYPE_NUMBERS),
+    ):
+        name = (word + core if pos == "pre" else core + word) + gap + suffix
+        yield name
+        yield name.translate(_TO_FULLWIDTH)
+    for core, word in product(ORG_CORES + TOWNS, DISTRICT_TYPE_WORDS):
+        yield core + word

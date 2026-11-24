@@ -126,7 +126,8 @@ def test_org_keeps_known_suffix():
 def test_address_realistic_pref_city():
     out = Surrogate(kind="address", strategy="hmac").apply(
         "東京都新宿区西新宿1-2-3", E, FakeContext())
-    assert any(out.startswith(p + c) for p, c in PREF_CITIES)
+    from privacy_masker.data.municipalities import load_municipalities
+    assert any(out.startswith(r.prefecture + r.name) for r in load_municipalities().records)
     assert out != "東京都新宿区西新宿1-2-3"
 
 

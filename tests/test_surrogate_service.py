@@ -109,7 +109,24 @@ def compatibility_digests():
 
 def test_non_service_and_legacy_outputs_match_v0_13():
     expected = json.loads((Path(__file__).parent / 'golden/surrogate_compat_v0_13.json').read_text())
-    assert compatibility_digests() == expected
+    actual = compatibility_digests()
+    # Keep the historical fixture intact, especially every semantic=False digest.
+    # Preserved finance/facility shapes now have dedicated semantic golden and 20-key tests.
+    def changed_semantic_shape(name):
+        if not name.startswith('operator/True/'):
+            return False
+        _, _, kind, value = name.split('/', 3)
+        # 地名連動が対象のケースのみ、新しい semantic golden と24鍵の地理テストで固定する。
+        from privacy_masker.operators.surrogate_geo import plan
+        if plan(Surrogate(kind=kind, key=KEY), kind, default_normalize(value), SurrogateCtx(KEY)) is not None:
+            return True
+        category = sm.RuleCategorizer.categorize(kind, default_normalize(value))
+        f = sm.extract_features(kind, value, default_normalize(value), category)
+        return f.type_word is not None and (kind == 'facility' or (kind == 'org' and category == 'finance'))
+
+    assert {k: v for k, v in actual.items() if not changed_semantic_shape(k)} == {
+        k: v for k, v in expected.items() if not changed_semantic_shape(k)
+    }
 
 
 @pytest.mark.parametrize('script,pool', [

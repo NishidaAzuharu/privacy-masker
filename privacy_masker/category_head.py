@@ -146,6 +146,45 @@ def _check_input_dim(kind: str, features: str, input_dim: int, hidden_size: int 
         )
 
 
+def _load_head_weights(weights, kind: str, output_dim: int, features: str,
+                       hidden_size: int | None, head_type: str, *, description: str = "category head",
+                       linear_float32: bool = False) -> tuple:
+    """分類・役割ヘッド共通の形状検査と float32 への変換。"""
+    keys = ("weight", "bias") if head_type == "linear" else ("w1", "b1", "w2", "b2")
+    try:
+        arrays = tuple(weights[f"{kind}.{key}"] for key in keys)
+    except KeyError as exc:
+        raise ConfigurationError(f"{description} is missing weights for {kind!r}") from exc
+    if head_type == "linear":
+        W, b = arrays
+        valid = W.ndim == 2 and b.ndim == 1 and W.shape[0] == b.shape[0] == output_dim
+    else:
+        W, b, W2, b2 = arrays
+        valid = (W.ndim == 2 and b.ndim == 1 and W2.ndim == 2 and b2.ndim == 1
+                 and W.shape[0] == b.shape[0] == W2.shape[1]
+                 and W2.shape[0] == b2.shape[0] == output_dim)
+    if not valid or W.shape[0] == 0 or W.shape[1] == 0:
+        raise ConfigurationError(f"{description} shape mismatch for {kind!r} ({head_type})")
+    _check_input_dim(kind, features, W.shape[1], hidden_size)
+    # 既存の線形分類ヘッドは保存精度を維持する。MLP と役割ヘッドは float32。
+    if head_type == "mlp" or linear_float32:
+        arrays = tuple(a.astype("float32") for a in arrays)
+    return tuple(a.tolist() for a in arrays) if head_type == "linear" else arrays
+
+
+def _head_probs(head: tuple, head_type: str, x: Sequence[float]) -> list[float] | None:
+    """共有推論。入力次元が一致しない場合は判定不能。"""
+    if head_type == "linear":
+        W, b = head
+        if not W or len(W[0]) != len(x):
+            return None
+        return _linear_softmax(W, b, x)
+    W1, b1, W2, b2 = head
+    if W1.shape[1] != len(x):
+        return None
+    return _mlp_softmax(W1, b1, W2, b2, x)
+
+
 class HeadCategorizer:
     """学習済み分類ヘッド（`category_head.safetensors` / `category_head.json`）を読み込み、
     NER encoder のスパンベクトルから型ごとのカテゴリを決める。純 Python 推論で torch に依存しない。
@@ -233,49 +272,9 @@ class HeadCategorizer:
             if not names:
                 # 0 行の重みは形状検査を素通りし、推論時に黙って OTHER へ落ちる。読み込み時に拒否する（linear / mlp 共通）
                 raise ConfigurationError(f"category head has no categories for {kind!r}")
-            if head_type == "linear":
-                try:
-                    W_arr = weights[f"{kind}.weight"]
-                    b_arr = weights[f"{kind}.bias"]
-                except KeyError as exc:
-                    raise ConfigurationError(f"category head is missing weights for {kind!r}") from exc
-                if W_arr.ndim != 2 or b_arr.ndim != 1:
-                    raise ConfigurationError(
-                        f"category head shape mismatch for {kind!r} (weight must be 2-D and bias 1-D, "
-                        f"got {W_arr.ndim}-D and {b_arr.ndim}-D)"
-                    )
-                _check_input_dim(kind, features, W_arr.shape[1], hidden_size)
-                W = W_arr.tolist()
-                b = b_arr.tolist()
-                if len(W) != len(names) or len(b) != len(names):
-                    raise ConfigurationError(f"category head shape mismatch for {kind!r}")
-                heads[kind] = (W, b)
-            else:
-                try:
-                    W1 = weights[f"{kind}.w1"]
-                    b1 = weights[f"{kind}.b1"]
-                    W2 = weights[f"{kind}.w2"]
-                    b2 = weights[f"{kind}.b2"]
-                except KeyError as exc:
-                    raise ConfigurationError(f"category head is missing mlp weights for {kind!r}") from exc
-                if (
-                    W1.ndim != 2
-                    or b1.ndim != 1
-                    or W2.ndim != 2
-                    or b2.ndim != 1
-                    or W1.shape[0] != b1.shape[0]
-                    or W2.shape[1] != W1.shape[0]
-                    or W2.shape[0] != len(names)
-                    or b2.shape[0] != len(names)
-                ):
-                    raise ConfigurationError(f"category head shape mismatch for {kind!r} (mlp)")
-                _check_input_dim(kind, features, W1.shape[1], hidden_size)
-                heads[kind] = (
-                    W1.astype("float32"),
-                    b1.astype("float32"),
-                    W2.astype("float32"),
-                    b2.astype("float32"),
-                )
+            heads[kind] = _load_head_weights(
+                weights, kind, len(names), features, hidden_size, head_type,
+            )
             cats[kind] = list(names)
             mm[kind] = _min_margin_for(kind, raw_margin)
         return cls(heads, cats, mm, features=features, head_type=head_type)
@@ -283,15 +282,12 @@ class HeadCategorizer:
     def _probs(self, head: tuple, x: tuple[float, ...]) -> list[float] | None:
         """`head`（linear なら `(W, b)`、mlp なら `(W1, b1, W2, b2)`）と入力 `x` から確率のリストを返す。
         次元が合わなければ ``None``（呼び出し側でフォールバックする）。"""
-        if self.head_type == "linear":
-            W, b = head
-            if not W or len(W[0]) != len(x):
-                return None
-            return _linear_softmax(W, b, x)
-        W1, b1, W2, b2 = head
-        if W1.shape[1] != len(x):
+        if self.head_type == "linear" and not head[0]:
             return None
-        return _mlp_softmax(W1, b1, W2, b2, x)
+        input_dim = len(head[0][0]) if self.head_type == "linear" else head[0].shape[1]
+        if self.features == "span_mean" and len(x) == 3 * input_dim:
+            x = x[:input_dim]  # span_ctx の先頭区画は span_mean
+        return _head_probs(head, self.head_type, x)
 
     def __call__(self, kind: str, vector: bytes) -> tuple[str, float]:
         """`vector`（`char_head` が返すスパンベクトルのバイト列）から `(カテゴリ, margin)` を返す。

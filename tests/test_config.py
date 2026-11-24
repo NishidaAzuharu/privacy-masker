@@ -4,6 +4,7 @@ import json
 import pytest
 
 from privacy_masker.config import build_engine, load_engine
+from privacy_masker.annotators import PublicKnowledge
 from privacy_masker.exceptions import ConfigurationError
 from privacy_masker.operators import DateShift, Hash, Mask, Surrogate, Tokenize
 
@@ -22,6 +23,29 @@ BASE = {
     },
     "options": {"deny_list": {"ハヤブサ計画": "PROJECT"}, "allow_list": ["公開情報"]},
 }
+
+
+@pytest.mark.parametrize("spec", [{"knowledge": "bundled"}, {}])
+def test_annotator_bundled_and_omitted_knowledge(spec, monkeypatch):
+    monkeypatch.setenv("PRIVACY_MASKER_KNOWLEDGE", "missing-override.pmk")
+    eng = build_engine({"detectors": [{"type": "regex_ja"}],
+                        "annotators": [{"type": "identifiability", "level": "standard", **spec}]})
+    ann = eng.annotators[0]
+    assert ann.knowledge is (PublicKnowledge.packaged() if spec else None)
+
+
+@pytest.mark.parametrize("use_env", [False, True])
+def test_annotator_custom_knowledge_path(tmp_path, monkeypatch, use_env):
+    # knowledge_env の値が bundled でも、従来どおりファイル名として解釈する。
+    path = tmp_path / "bundled"
+    PublicKnowledge.from_iterable(["独自語彙あ"]).save(path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PM_TEST_KNOWLEDGE", "bundled")
+    spec = {"knowledge_env": "PM_TEST_KNOWLEDGE"} if use_env else {"knowledge": str(path)}
+    eng = build_engine({"detectors": [{"type": "regex_ja"}],
+                        "annotators": [{"type": "identifiability", **spec}]})
+    assert "独自語彙あ" in eng.annotators[0].knowledge
+    assert "新宿駅" not in eng.annotators[0].knowledge
 
 
 def test_build_engine_from_dict_and_transform():
@@ -97,3 +121,45 @@ def test_char_head_detector_from_config(monkeypatch):
     import pytest
     with pytest.raises(ConfigurationError):
         _build_detector({"type": "char_head"})
+
+
+@pytest.mark.parametrize("with_head", [True, False])
+def test_person_role_detector_from_config(monkeypatch, with_head):
+    import privacy_masker.detectors as dets
+    from tests.test_annotators import RoleStub
+
+    head = RoleStub(0.9) if with_head else None
+
+    class FakeCharHead:
+        name = "char_head_ner"
+
+        def __init__(self, **kwargs):
+            self.person_role_head = head
+
+        def detect(self, text):
+            return []
+
+    monkeypatch.setattr(dets, "CharHeadNerDetector", FakeCharHead)
+    cfg = {"detectors": [{"type": "char_head", "model": "model"}],
+           "annotators": [{"type": "identifiability", "person_role": "detector", "person_role_threshold": 0.6}]}
+    if not with_head:
+        with pytest.raises(ConfigurationError, match="person_role"):
+            build_engine(cfg)
+    else:
+        engine = build_engine(cfg)
+        assert engine.annotators[0].person_role is head
+        assert engine.annotators[0].person_role_threshold == 0.6
+        cfg["annotators"][0].pop("person_role")
+        assert build_engine(cfg).annotators[0].person_role is None
+        cfg["annotators"][0]["person_role"] = "detector"
+        cfg["detectors"] *= 2
+        with pytest.raises(ConfigurationError, match="person_role"):
+            build_engine(cfg)
+
+
+@pytest.mark.parametrize("value", ["unknown", True, 1])
+def test_config_rejects_invalid_person_role(value):
+    cfg = {"detectors": [{"type": "regex_ja"}],
+           "annotators": [{"type": "identifiability", "person_role": value}]}
+    with pytest.raises(ConfigurationError, match="person_role"):
+        build_engine(cfg)

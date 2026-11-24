@@ -1,0 +1,12 @@
+{
+  "file": "ja_municipalities.tsv",
+  "entries": 1892,
+  "sha256": "a4118448330a444f0bcce79cc441f6f2206fc861a8b59d05f96fd2a39616908b",
+  "format": "UTF-8 TSV: prefecture<TAB>city, sorted, unique, no header",
+  "source": "日本郵便 郵便番号データ",
+  "source_url": "https://www.post.japanpost.jp/service/search/zipcode/download/utf/zip/utf_ken_all.zip",
+  "acquired_date": "2026-09-22",
+  "source_sha256": "7d42728c4c9023e30668b1ef144fd5ffd831a417011c82d3e85ca3c35db43b15",
+  "copyright": "日本郵便は郵便番号データについて著作権を主張していない。",
+  "generator": "tools/build_municipalities.py"
+}

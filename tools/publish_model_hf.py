@@ -13,6 +13,9 @@
   5. ステージング内の全テキストファイルに学習機のパス・メールアドレスが残っていないことを検査する（残っていれば止める）
   6. --dry-run でなければ create_repo(exist_ok=True) → upload_folder。認証は `hf auth login` か環境変数 HF_TOKEN
      （このスクリプトはトークンを引数で受け取らない）
+
+--person-role-head DIR で役割ヘッドを同梱する。ステージング後の encoder 照合は --no-smoke でも必須。
+スモークテストは PERSON の役割確率も検査し、漏えい検査は役割ヘッドの重みの JSON ヘッダーも対象にする。
 """
 from __future__ import annotations
 
@@ -39,6 +42,7 @@ REQUIRED_FILES = (
     "config.json", "model.safetensors", "tokenizer.json", "tokenizer_config.json",
     "char_head.safetensors", "char_head_config.json",
 )
+PERSON_ROLE_FILES = ("person_role_head.json", "person_role_head.safetensors")
 DEFAULT_TEMPLATE = os.path.join(ROOT, "docs", "hub", "model_card_template.md")
 MANIFEST_NAME = "privacy_masker_model.json"
 # 学習時の内部情報。第三者向けの配布物には入れない（推論は読まない: load_char_model が使うのは char_dim / kernel_size / use_mix / num_labels / label_list / dropout / class_weights）
@@ -84,15 +88,21 @@ def sanitize_char_head_config(cfg: dict) -> dict:
 
 
 def scan_text_files(root: str) -> list[str]:
-    """テキストファイルに禁止パターンが残っていないか。見つかったら「ファイル: 種類（件数）」を返す（中身は出力しない）。"""
+    """テキストと役割ヘッドの重みの JSON ヘッダーを検査。種類と件数だけ返し、中身は出力しない。"""
     findings: list[str] = []
     for dirpath, _, files in os.walk(root):
         for name in sorted(files):
-            if not name.endswith(TEXT_SUFFIXES):
-                continue
             path = os.path.join(dirpath, name)
-            with open(path, encoding="utf-8", errors="replace") as f:
-                text = f.read()
+            if name == PERSON_ROLE_FILES[1]:
+                # safetensors の先頭 8 バイトは JSON ヘッダー長。テンソル本体は検索しない。
+                with open(path, "rb") as f:
+                    size = int.from_bytes(f.read(8), "little")
+                    text = f.read(size).decode("utf-8")
+            elif name.endswith(TEXT_SUFFIXES):
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+            else:
+                continue
             for label, pat in FORBIDDEN_PATTERNS:
                 n = len(pat.findall(text))
                 if n:
@@ -100,8 +110,13 @@ def scan_text_files(root: str) -> list[str]:
     return findings
 
 
-def render_model_card(template: str, mapping: dict) -> str:
-    """``$name`` を埋める。不足していれば KeyError（黙って空にしない）。"""
+def render_model_card(template: str, mapping: dict, *, person_role_head: bool = False) -> str:
+    """任意の役割ヘッド節を選び、``$name`` を埋める。不足していれば KeyError。"""
+    template = re.sub(
+        r"<!-- person_role_head:start -->\n(.*?)<!-- person_role_head:end -->\n",
+        lambda match: match.group(1) if person_role_head else "",
+        template, flags=re.DOTALL,
+    )
     return string.Template(template).substitute(mapping)
 
 
@@ -121,33 +136,49 @@ def library_version() -> str:
         return version("privacy-masker")
 
 
-def smoke_test(model_dir: str) -> dict:
-    """読み込んで 1 文を検出し、PERSON と ADDRESS が出ることを確かめる。出なければ止める。"""
+def smoke_test(model_dir: str, *, person_role_head: bool = False) -> dict:
+    """1 文の PERSON / ADDRESS と、指定時は PERSON の文脈ベクトルによる役割確率を検査する。"""
     from privacy_masker.detectors import CharHeadNerDetector
 
-    det = CharHeadNerDetector(model=model_dir, device="cpu")
+    kwargs = {"person_role_head": True} if person_role_head else {}
+    det = CharHeadNerDetector(model=model_dir, device="cpu", **kwargs)
     ents = det.detect(SMOKE_TEXT)
     labels = {e.entity_type for e in ents}
     missing = SMOKE_REQUIRED_LABELS - labels
     if missing:
         raise SystemExit(f"スモークテスト失敗: {sorted(missing)} が検出されませんでした（検出 {len(ents)} 件: {sorted(labels)}）")
-    return {"text": SMOKE_TEXT, "entities": [[e.entity_type, e.start, e.end, round(e.score, 3)] for e in ents]}
+    result = {"text": SMOKE_TEXT, "entities": [[e.entity_type, e.start, e.end, round(e.score, 3)] for e in ents]}
+    if person_role_head:
+        probabilities = []
+        for entity in ents:
+            if entity.entity_type != "PERSON":
+                continue
+            probability = det.person_role_head(entity.vector)
+            if probability is None or not 0 <= probability <= 1:
+                raise SystemExit("スモークテスト失敗: PERSON の役割確率が [0, 1] の範囲で得られませんでした")
+            probabilities.append(probability)
+        result["person_role_probabilities"] = probabilities
+    return result
 
 
 def stage(model_dir: str, out_dir: str, *, repo_id: str, license: str, template_path: str = DEFAULT_TEMPLATE,
-          smoke: bool = True, date: str | None = None) -> dict:
+          smoke: bool = True, date: str | None = None, person_role_head: str | None = None) -> dict:
     """アップロードする内容を ``out_dir`` に組み立て、manifest を返す。``out_dir`` は無いか空であること。"""
     model_dir = os.path.abspath(model_dir)
     missing = [f for f in REQUIRED_FILES if not os.path.exists(os.path.join(model_dir, f))]
     if missing:
         raise SystemExit(f"モデルフォルダに必要なファイルがありません: {missing}（{model_dir}）")
+    if person_role_head is not None:
+        missing = [f for f in PERSON_ROLE_FILES if not os.path.isfile(os.path.join(person_role_head, f))]
+        if missing:
+            raise SystemExit(f"役割ヘッドに必要なファイルがありません: {missing}")
     if license not in LICENSES:
         raise SystemExit(f"--license は {LICENSES} のどれかにしてください: {license}")
     if os.path.isdir(out_dir) and os.listdir(out_dir):
         raise SystemExit(f"出力先が空ではありません: {out_dir}")
     os.makedirs(out_dir, exist_ok=True)
 
-    smoke_result = smoke_test(model_dir) if smoke else None
+    smoke_result = smoke_test(model_dir) if smoke and person_role_head is None else None
 
     with open(os.path.join(model_dir, "char_head_config.json"), encoding="utf-8") as f:
         raw_cfg = json.load(f)
@@ -162,8 +193,22 @@ def stage(model_dir: str, out_dir: str, *, repo_id: str, license: str, template_
         else:
             shutil.copyfile(src, dst)
 
+    role_cfg = None
+    if person_role_head is not None:
+        from privacy_masker import PersonRoleHead
+
+        for name in PERSON_ROLE_FILES:
+            shutil.copyfile(os.path.join(person_role_head, name), os.path.join(out_dir, name))
+        # --no-smoke でも形状・形式とステージング内の encoder の SHA-256 は必ず照合する。
+        PersonRoleHead.load(out_dir)
+        with open(os.path.join(out_dir, PERSON_ROLE_FILES[0]), encoding="utf-8") as f:
+            role_cfg = json.load(f)
+        if smoke:
+            smoke_result = smoke_test(out_dir, person_role_head=True)
+
+    staged_files = REQUIRED_FILES + (PERSON_ROLE_FILES if role_cfg is not None else ())
     files = {name: {"bytes": os.path.getsize(os.path.join(out_dir, name)), "sha256": sha256_file(os.path.join(out_dir, name))}
-             for name in REQUIRED_FILES}
+             for name in staged_files}
     version = library_version()
     date = date or dt.date.today().isoformat()
     manifest = {
@@ -180,16 +225,21 @@ def stage(model_dir: str, out_dir: str, *, repo_id: str, license: str, template_
         "smoke_test": smoke_result,
         "staged_at": date,
     }
+    if role_cfg is not None:
+        manifest["person_role_head"] = {key: role_cfg[key] for key in ("features", "threshold", "head_type", "format_version")}
     with open(os.path.join(out_dir, MANIFEST_NAME), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
         f.write("\n")
 
     with open(template_path, encoding="utf-8") as f:
         template = f.read()
-    card = render_model_card(template, {
+    mapping = {
         "repo_id": repo_id, "license": license, "version": version, "date": date,
         "base_revision": BASE_MODEL_REVISION, "sha_table": sha_table(files),
-    })
+    }
+    if role_cfg is not None:
+        mapping["person_role_threshold"] = role_cfg["threshold"]
+    card = render_model_card(template, mapping, person_role_head=role_cfg is not None)
     with open(os.path.join(out_dir, "README.md"), "w", encoding="utf-8") as f:
         f.write(card)
 
@@ -212,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo-id", required=True, help="Hub のリポジトリ ID（owner/name）")
     ap.add_argument("--model", default=None, help="モデルフォルダ（既定: データフォルダ PRIVACY_MASKER_DRIVE_DIR 内の本番モデル）")
+    ap.add_argument("--person-role-head", metavar="DIR", help="同梱する任意の人名役割ヘッドのフォルダ（encoder を照合）")
     ap.add_argument("--license", default="apache-2.0", choices=LICENSES, help="重みのライセンス（既定 apache-2.0 = encoder の元モデルと同じ）")
     ap.add_argument("--out", default=None, help="ステージング先（既定: 一時フォルダ）。無いか空のフォルダ")
     ap.add_argument("--template", default=DEFAULT_TEMPLATE)
@@ -224,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     model_dir = args.model or os.path.join(drive_dir(), PROD_SUBDIR)
     out_dir = args.out or tempfile.mkdtemp(prefix="privacy-masker-hf-")
     manifest = stage(model_dir, out_dir, repo_id=args.repo_id, license=args.license, template_path=args.template,
-                     smoke=not args.no_smoke)
+                     smoke=not args.no_smoke, person_role_head=args.person_role_head)
     print(f"staged: {out_dir}")
     for name, info in manifest["files"].items():
         print(f"  {name:<24} {info['bytes']:>12,}  {info['sha256'][:16]}…")

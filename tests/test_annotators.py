@@ -3,6 +3,7 @@
 設計: docs/design_identifiability.md。原則は「保持は正の証拠があるときだけ（fail-closed）」。
 """
 import gzip
+import dataclasses
 
 import pytest
 
@@ -17,6 +18,96 @@ from privacy_masker.exceptions import AnnotatorError, ConfigurationError
 from privacy_masker.operators import Keep, Tokenize
 from privacy_masker.types import Entity
 from tests.conftest import FakeDetector
+
+
+class RoleStub:
+    threshold = 0.8
+
+    def __init__(self, probability):
+        self.probability = probability
+        self.seen = []
+
+    def __call__(self, vector):
+        self.seen.append(vector)
+        return self.probability
+
+
+@pytest.mark.parametrize("probability,expected", [(0.79, "PERSON"), (0.8, "PERSON_PUBLIC"),
+                                                   (0.9, "PERSON_PUBLIC"), (None, "PERSON"),
+                                                   (float("nan"), "PERSON")])
+def test_role_veto_on_knowledge_match(probability, expected):
+    text = "甲乙丙丁"
+    entity = Entity("PERSON", 0, len(text), 0.9, vector=b"vector")
+    head = RoleStub(probability)
+    ann = IdentifiabilityAnnotator(knowledge={text}, person_role=head)
+    assert ann.annotate(text, [entity])[0] == dataclasses.replace(entity, entity_type=expected)
+    assert head.seen == [b"vector"]
+    assert IdentifiabilityAnnotator(knowledge={text}).annotate(text, [entity])[0].entity_type == "PERSON_PUBLIC"
+
+
+@pytest.mark.parametrize("vector", [None, b""])
+def test_role_missing_vector_vetoes_without_calling_head(vector):
+    text = "甲乙丙丁"
+    head = RoleStub(1.0)
+    ann = IdentifiabilityAnnotator(knowledge={text}, person_role=head)
+    assert ann.annotate(text, [Entity("PERSON", 0, 4, 0.9, vector=vector)])[0].entity_type == "PERSON"
+    assert not head.seen
+
+
+@pytest.mark.parametrize("include_title", [False, True])
+def test_role_does_not_veto_public_title(include_title):
+    text = "甲乙丙丁首相"
+    head = RoleStub(0.0)
+    entity = Entity("PERSON", 0, len(text) if include_title else 4, 0.9)
+    ann = IdentifiabilityAnnotator(knowledge={text[:4]}, person_role=head)
+    assert ann.annotate(text, [entity])[0].entity_type == "PERSON_PUBLIC"
+    assert not head.seen
+
+
+def test_role_cannot_promote_unknown_person():
+    head = RoleStub(1.0)
+    entity = Entity("PERSON", 0, 4, 0.9, vector=b"vector")
+    ann = IdentifiabilityAnnotator(knowledge=set(), person_role=head)
+    assert ann.annotate("甲乙丙丁", [entity]) == [entity]
+    assert not head.seen
+
+
+def test_role_veto_feeds_private_attribution():
+    text = "甲乙丙丁の最寄りは仮設駅"
+    entities = [Entity("PERSON", 0, 4, 0.9, vector=b"vector"), Entity("FACILITY", 9, 12, 0.9)]
+    knowledge = {text[:4], text[9:12]}
+    plain = IdentifiabilityAnnotator(knowledge=knowledge).annotate(text, entities)
+    assert [e.entity_type for e in plain] == ["PERSON_PUBLIC", "FACILITY_PUBLIC"]
+    ann = IdentifiabilityAnnotator(knowledge=knowledge, person_role=RoleStub(0.1))
+    assert ann.annotate(text, entities) == entities
+
+
+def test_role_threshold_precedence_and_callable_without_attribute():
+    entity = Entity("PERSON", 0, 4, 0.9, vector=b"vector")
+    kw = {"knowledge": {"甲乙丙丁"}, "person_role": RoleStub(0.7)}
+    assert IdentifiabilityAnnotator(**kw).annotate("甲乙丙丁", [entity]) == [entity]
+    ann = IdentifiabilityAnnotator(**kw, person_role_threshold=0.7)
+    assert ann.annotate("甲乙丙丁", [entity])[0].entity_type == "PERSON_PUBLIC"
+    fn = lambda _: 0.7
+    with pytest.raises(ConfigurationError, match="threshold"):
+        IdentifiabilityAnnotator(person_role=fn)
+    assert IdentifiabilityAnnotator(person_role=fn, person_role_threshold=0).person_role_threshold == 0
+
+
+@pytest.mark.parametrize("threshold", [True, "0.8", -1, 2, float("nan")])
+def test_role_invalid_threshold(threshold):
+    with pytest.raises(ConfigurationError, match="threshold"):
+        IdentifiabilityAnnotator(person_role=RoleStub(0.9), person_role_threshold=threshold)
+
+
+@pytest.mark.parametrize("level", ["minimal", "strict"])
+def test_role_only_changes_standard(level):
+    head = RoleStub(0.0)
+    entity = Entity("PERSON", 0, 4, 0.9, vector=b"vector")
+    kw = {"level": level, "knowledge": {"甲乙丙丁"}}
+    assert (IdentifiabilityAnnotator(**kw, person_role=head).annotate("甲乙丙丁", [entity])
+            == IdentifiabilityAnnotator(**kw).annotate("甲乙丙丁", [entity]))
+    assert not head.seen
 
 KNOWN = [
     "安倍晋三", "岸田文雄", "ジル・バイデン", "新宿駅", "東京都庁", "トヨタ自動車", "豊田市",
@@ -80,8 +171,7 @@ def test_knowledge_load_from_env(tmp_path, knowledge, monkeypatch):
     monkeypatch.setenv("PRIVACY_MASKER_KNOWLEDGE", str(p))
     assert "東京都庁" in PublicKnowledge.load()
     monkeypatch.delenv("PRIVACY_MASKER_KNOWLEDGE")
-    with pytest.raises(ConfigurationError):
-        PublicKnowledge.load()
+    assert PublicKnowledge.load() is PublicKnowledge.packaged()
 
 
 def test_knowledge_load_rejects_garbage(tmp_path):

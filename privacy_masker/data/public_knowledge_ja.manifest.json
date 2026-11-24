@@ -1,0 +1,12 @@
+{
+  "file": "public_knowledge_ja.pmk",
+  "bytes": 22572292,
+  "sha256": "271d41788998c4bfdca6e385e0e0ab1ae76ea185b4ccec7032e7ba335df2d4a8",
+  "entries": 2821535,
+  "format": "PMK1: blake2b 64bit ハッシュのソート済み配列。見出し語の文字列は含まない",
+  "source": "Wikipedia 日本語版 見出し語 ns0",
+  "dump_date": "2026-09-02",
+  "license": "CC BY-SA 4.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "generator": "tools/build_knowledge.py"
+}

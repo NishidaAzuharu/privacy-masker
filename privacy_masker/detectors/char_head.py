@@ -42,7 +42,9 @@ class CharHeadNerDetector:
 
     ``span_vectors=True``（既定）で ``Entity.vector`` に encoder のスパンベクトルを付ける
     （意味を保つ Surrogate の分類ヘッド用。追加の forward は無い）。特徴量は ``vector_features``
-    （読み込んだ分類ヘッドの ``features``、無ければ ``span_mean``）。
+    （分類・役割ヘッドのいずれかが要求すれば ``span_ctx``、それ以外は ``span_mean``）。
+    ``person_role_head="auto"`` は役割ヘッドの JSON がある場合だけ読み込む。``True`` は必須、
+    ``False`` は無効。読み込みだけでは公知判定は変わらず、アノテータへの明示的な指定が必要。
     """
 
     def __init__(
@@ -65,6 +67,7 @@ class CharHeadNerDetector:
         model_kwargs: Mapping | None = None,
         span_vectors: bool = True,
         category_head: bool | str = "auto",
+        person_role_head: bool | str = "auto",
         revision: str | None = None,
         cache_dir: str | None = None,
         local_files_only: bool = False,
@@ -80,6 +83,8 @@ class CharHeadNerDetector:
         if not (isinstance(category_head, bool) or (isinstance(category_head, str) and category_head == "auto")):
             # 1 / 0 は == では True / False と等しいが受け付けない（bool か "auto" だけ）
             raise ConfigurationError(f"unknown category_head: {category_head!r} (use True, False or 'auto')")
+        if not (isinstance(person_role_head, bool) or (isinstance(person_role_head, str) and person_role_head == "auto")):
+            raise ConfigurationError(f"unknown person_role_head: {person_role_head!r} (use True, False or 'auto')")
 
         self._ch = ch
         self.dtype = self._resolve_dtype(dtype, device)
@@ -94,6 +99,7 @@ class CharHeadNerDetector:
 
                 tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
             self.category_head = self._load_category_head(path, category_head)
+            self.person_role_head = self._load_person_role_head(path, person_role_head)
         else:
             if model_kwargs:
                 raise ConfigurationError("model_kwargs is only used when loading from a path")
@@ -101,10 +107,13 @@ class CharHeadNerDetector:
                 raise ConfigurationError("revision / cache_dir / local_files_only are only used when loading from a path or Hub repo id")
             if category_head is True:
                 raise ConfigurationError("category_head=True requires a model path")
+            if person_role_head is True:
+                raise ConfigurationError("person_role_head=True requires a model path")
             self.model = model.to(device).eval() if hasattr(model, "to") else model
             if tokenizer is None:
                 raise ConfigurationError("tokenizer is required when passing a model object")
             self.category_head = None
+            self.person_role_head = None
         if not getattr(tokenizer, "is_fast", False):
             raise ConfigurationError("CharHeadNerDetector requires a fast tokenizer (offset_mapping)")
 
@@ -177,9 +186,21 @@ class CharHeadNerDetector:
 
     @property
     def vector_features(self) -> str:
-        """`Entity.vector` に入れる特徴量。読み込んだ分類ヘッドが要求するもの（`category_head.features`）、無ければ `span_mean`。"""
-        head = getattr(self, "category_head", None)
-        return getattr(head, "features", None) or "span_mean"
+        """どちらかのヘッドが文脈を必要とすれば span_ctx、そうでなければ span_mean。"""
+        heads = (getattr(self, "category_head", None), getattr(self, "person_role_head", None))
+        return "span_ctx" if any(getattr(h, "features", None) == "span_ctx" for h in heads) else "span_mean"
+
+    @staticmethod
+    def _load_person_role_head(path: str, person_role_head: bool | str):
+        import os
+
+        from ..person_role_head import PERSON_ROLE_HEAD_CONFIG, PersonRoleHead
+
+        if person_role_head is True or (
+            person_role_head == "auto" and os.path.exists(os.path.join(path, PERSON_ROLE_HEAD_CONFIG))
+        ):
+            return PersonRoleHead.load(path)
+        return None
 
     def _to_entities(self, spans: Sequence[Any], vectors: Sequence[bytes | None] | None = None) -> list[Entity]:
         out: list[Entity] = []

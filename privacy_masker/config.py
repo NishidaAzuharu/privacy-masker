@@ -27,7 +27,8 @@
     annotators:
       - type: identifiability
         level: standard
-        knowledge: /path/jawiki_titles_ns0.pmk     # または knowledge_env
+        knowledge: bundled          # 同梱データ。パス指定または knowledge_env も可。省略時は公知データなし
+        person_role: detector       # 任意。同じ設定の char_head の役割ヘッドで拒否判定（person_role_threshold で閾値を上書き可）
     policy:
       preset: strict                # strict | dataset | standard | minimal（rules/default と併用可: preset を土台に上書き）
       default: {op: tokenize, strategy: sequential}
@@ -166,16 +167,31 @@ def _build_enhancer(spec):
     raise ConfigurationError(f"unknown enhancer {spec!r}")
 
 
-def _build_annotator(spec: Mapping[str, Any]):
+def _build_annotator(spec: Mapping[str, Any], detectors=()):
     if spec.get("type") != "identifiability":
         raise ConfigurationError(f"unknown annotator type {spec.get('type')!r}")
     from .annotators import IdentifiabilityAnnotator, PublicKnowledge
     knowledge = None
     path = _env(spec, "knowledge")
-    if path:
+    if spec.get("knowledge") == "bundled":
+        knowledge = PublicKnowledge.packaged()
+    elif path:
         knowledge = PublicKnowledge.load(path)
+    person_role = None
+    role_spec = spec.get("person_role")
+    if role_spec is not None:
+        if role_spec != "detector":
+            raise ConfigurationError("person_role must be 'detector' or omitted")
+        from .detectors import CharHeadNerDetector
+
+        heads = [d.person_role_head for d in detectors
+                 if isinstance(d, CharHeadNerDetector) and getattr(d, "person_role_head", None) is not None]
+        if len(heads) != 1:
+            raise ConfigurationError("person_role: detector requires exactly one char_head detector with a person role head")
+        person_role = heads[0]
     return IdentifiabilityAnnotator(level=spec.get("level", "standard"), knowledge=knowledge,
-                                    window=int(spec.get("window", 40)))
+                                    window=int(spec.get("window", 40)), person_role=person_role,
+                                    person_role_threshold=spec.get("person_role_threshold"))
 
 
 def _build_policy(spec: Mapping[str, Any] | None) -> Policy:
@@ -207,7 +223,7 @@ def build_engine(config: Mapping[str, Any]) -> PrivacyEngine:
         policy=_build_policy(config.get("policy")),
         refiner=_build_refiner(config.get("refiner")),
         enhancer=_build_enhancer(config.get("enhancer")),
-        annotators=[_build_annotator(a) for a in config.get("annotators") or []],
+        annotators=[_build_annotator(a, dets) for a in config.get("annotators") or []],
         on_detector_error=config.get("on_detector_error", "raise"),
         entities=opts.get("entities"), score_threshold=opts.get("score_threshold"),
         allow_list=opts.get("allow_list"), allow_list_match=opts.get("allow_list_match", "exact"),

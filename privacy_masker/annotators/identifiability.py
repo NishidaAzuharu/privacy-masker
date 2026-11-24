@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from typing import Container, Sequence
+from typing import Callable, Container, Sequence
 
 from ..exceptions import ConfigurationError
 from ..refiner_affix import DEFAULT_PREFIXES
@@ -148,6 +148,8 @@ class IdentifiabilityAnnotator:
         address_area_types: Sequence[str] = ("LOCATION",),
         city_suffix_chars: str = DEFAULT_CITY_SUFFIX_CHARS,
         address_gap: int = 2,
+        person_role: Callable[[bytes], float | None] | None = None,
+        person_role_threshold: float | None = None,
     ) -> None:
         if level not in LEVELS:
             raise ConfigurationError(f"level must be one of {LEVELS}")
@@ -157,6 +159,15 @@ class IdentifiabilityAnnotator:
             raise ConfigurationError("public_suffix must be non-empty")
         if knowledge is not None and not hasattr(knowledge, "__contains__"):
             raise ConfigurationError("knowledge must support the 'in' operator")
+        if person_role is not None:
+            from ..person_role_head import _validate_threshold
+
+            if not callable(person_role):
+                raise ConfigurationError("person_role must be callable")
+            threshold = person_role_threshold if person_role_threshold is not None else getattr(person_role, "threshold", None)
+            person_role_threshold = _validate_threshold(threshold)
+        self.person_role = person_role
+        self.person_role_threshold = person_role_threshold
         self.level = level
         self.knowledge = knowledge
         self.public_titles = tuple(public_titles)
@@ -243,7 +254,15 @@ class IdentifiabilityAnnotator:
         norm = normalize_surface(surface)
         compact = norm.replace(" ", "")
         is_fullname = len(compact) >= _FULLNAME_MIN_CHARS or any(s in norm for s in _SEPARATORS)
-        return is_fullname and surface in self.knowledge
+        if not (is_fullname and surface in self.knowledge):
+            return False
+        if self.level == "standard" and self.person_role is not None:
+            if not e.vector:
+                return False
+            probability = self.person_role(e.vector)
+            # 判定不能・閾値未満は私人。肩書きルールは上の早期 return で対象外。
+            return probability is not None and self.person_role_threshold <= probability <= 1.0
+        return True
 
     def _place_is_public(self, text: str, e: Entity) -> bool:
         if self.knowledge is None:
