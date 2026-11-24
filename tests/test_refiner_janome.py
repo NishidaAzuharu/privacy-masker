@@ -84,6 +84,56 @@ def test_honorific_snap_boundaries(backend_refiner, text, entity_type, end, expe
         (0, expected_end, entity_type)]
 
 
+@pytest.mark.parametrize("text,end", [
+    # 辞書が名前の最後の字と助詞を 1 語にする組（平が・平に・真に・実は・良から）
+    ("大谷翔平が今季30号を放った。", 4),
+    ("佐藤航平に連絡した。", 4),
+    ("佐藤悠真に連絡した。", 4),
+    ("佐藤実は不在です。", 3),
+    ("佐藤咲良から連絡した。", 4),
+    # 助詞が別の語になる場合も変わらない
+    ("大谷翔平は今季30号を放った。", 4),
+    ("山田太郎が来た。", 4),
+])
+def test_snap_does_not_absorb_particle_into_person(backend_refiner, text, end):
+    assert spans(backend_refiner, text, [E("PERSON", 0, end)]) == [(0, end, "PERSON")]
+
+
+@pytest.mark.parametrize("particle", ["が", "は", "を", "に", "の", "と", "も", "で", "へ", "や", "か", "から", "より", "まで"])
+@pytest.mark.parametrize("text_head,entity_type,start,end,expected", [
+    # 漢字・カタカナで終わる人名: 追加部分が助詞と完全一致なら広げない
+    ("佐藤翔平", "PERSON", 0, 4, (0, 4)),
+    ("佐藤ケン", "PERSON", 0, 4, (0, 4)),
+    # 先頭側は従来どおり語の境界まで広げる
+    ("佐藤翔平", "PERSON", 1, 4, (0, 4)),
+    # ひらがなで終わるスパンは、途中で切れた名前と区別できないので従来どおり広げる
+    ("佐藤はる", "PERSON", 0, 4, None),
+    # 1 文字の断片と、人名以外の型は従来どおり
+    ("平", "PERSON", 0, 1, (0, 1)),
+    ("佐藤翔平", "ORG", 0, 4, None),
+])
+def test_snap_particle_guard_conditions(refiner, particle, text_head, entity_type, start, end, expected):
+    # 辞書に依存しないよう、「名前の最後の字 + 助詞」が 1 語になった形態素列を直接渡す
+    text = text_head + particle + "来た"
+    cut = len(text_head) - 1
+    full = len(text_head) + len(particle)
+    morphemes = [(cut, full, "名詞,サ変接続,*,*"), (full, len(text), "動詞,自立,*,*")]
+    if cut:
+        morphemes.insert(0, (0, cut, "名詞,固有名詞,人名,姓"))
+    char_to_m = {i: mi for mi, (s, e, _) in enumerate(morphemes) for i in range(s, e)}
+    out = refiner._snap_one(text, morphemes, char_to_m, E(entity_type, start, end))
+    assert (out.start, out.end) == (expected or (0, full))
+
+
+def test_snap_particle_guard_requires_exact_particle(refiner):
+    # 追加部分が助詞と完全一致しないときは、従来どおり語の境界まで広げる
+    text = "佐藤翔平がね来た"
+    morphemes = [(0, 3, "名詞,固有名詞,人名,姓"), (3, 6, "名詞,一般,*,*"), (6, 8, "動詞,自立,*,*")]
+    char_to_m = {i: mi for mi, (s, e, _) in enumerate(morphemes) for i in range(s, e)}
+    out = refiner._snap_one(text, morphemes, char_to_m, E("PERSON", 0, 4))
+    assert (out.start, out.end) == (0, 6)
+
+
 @pytest.mark.parametrize("text,start,end,expected_start,expected_end", [
     ("王様に確認します。", 0, 1, 0, 2),
     ("殿様に確認します。", 0, 1, 0, 2),

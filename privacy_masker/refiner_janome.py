@@ -47,6 +47,8 @@ _INNER_SPACE_RE = re.compile(r"\S[ \u3000]\S")
 def _is_hira(ch: str) -> bool:
     return "ぁ" <= ch <= "ゟ" or ch == "ー"
 _DEFAULT_HONORIFICS_JA = ("さん", "さま", "様", "氏", "くん", "ちゃん", "君", "殿")
+# 語境界スナップで人名の末尾に取り込まない助詞。辞書が名前の最後の字とまとめて 1 語にした場合に使う
+_SNAP_PARTICLES_JA = ("が", "は", "を", "に", "の", "と", "も", "で", "へ", "や", "か", "から", "より", "まで")
 # 名前の直後に来る肩書き・呼称・場所語。「田中は先生」のように助詞の直後には来ないので、
 # これらが続くなら削ろうとしている末尾の 1 文字は名前の一部と判断する
 _TITLES_AFTER_NAME = (
@@ -172,10 +174,17 @@ class MorphologicalRefiner:
         # 名前と敬称が同じ形態素でも、NERが敬称の直前で切っていれば末尾は広げない。
         # 既に含まれた文字は削らず、追加部分が敬称と完全一致するときだけ抑止する。
         # 元スパンが空白を除いて1文字の断片なら、従来どおり語全体へ広げる安全側にする。
+        # 名前の最後の字と助詞が同じ形態素の場合も同じ扱いにする（下のコメント）。
         if (ent.entity_type in self.honorific_types and e_new > ent.end
-                and sum(not ch.isspace() for ch in text[ent.start:ent.end]) >= 2
-                and text[ent.end:e_new] in _DEFAULT_HONORIFICS_JA):
-            e_new = ent.end
+                and sum(not ch.isspace() for ch in text[ent.start:ent.end]) >= 2):
+            added = text[ent.end:e_new]
+            # 辞書が名前の最後の字と助詞を 1 語にすることがある（翔|平が、悠|真に、実は、咲|良から）。
+            # 追加部分が助詞と完全一致し、スパンの最後の字がひらがなでないときも広げない。
+            # ひらがなで終わるスパンは、名前の途中で切れた検出（はる|か、ゆき|の）と区別できないので
+            # 従来どおり広げる（実モデルで、この補完が効く文が多いことを確認済み）
+            if added in _DEFAULT_HONORIFICS_JA or (
+                    added in _SNAP_PARTICLES_JA and not "ぁ" <= text[ent.end - 1] <= "ゟ"):
+                e_new = ent.end
         if ms != me:
             # 端が付属語・記号の形態素の途中なら、その側は拡張しない（付属語を名前に取り込まない）
             if e_new > ent.end and morphemes[me][2].startswith(_TRIM_POS):
